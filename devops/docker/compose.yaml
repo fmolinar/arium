@@ -1,15 +1,12 @@
-name: react-local-app
-
 services:
-  frontend:
+  app:
     build:
       context: ../..
       dockerfile: devops/docker/Dockerfile
 
-    image: react-local-app:latest
-    container_name: react-local-app
-
+    image: arium-react:latest
+    container_name: arium-react
     restart: unless-stopped
 
     ports:
-      - "3000:80"
+      - "3000:4173"
