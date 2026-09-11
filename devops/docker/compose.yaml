@@ -1,12 +1,15 @@
+# Docker Compose configuration for the Arium React application
 services:
   app:
     build:
+      # Build context and Dockerfile path
       context: ../..
+      # point to the Dockerfile in the devops/docker directory
       dockerfile: devops/docker/Dockerfile
-
+    # pull the latest image from the Docker registry if it exists
     image: arium-react:latest
     container_name: arium-react
     restart: unless-stopped
-
+    # Set port mapping for the application, mapping port 3000 on the host to port 4173 in the container
     ports:
       - "3000:4173"
