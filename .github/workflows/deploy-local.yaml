@@ -1,0 +1,43 @@
+name: Deploy to local Docker Desktop
+
+on:
+  push:
+    branches:
+      - main
+
+  workflow_dispatch:
+
+concurrency:
+  group: local-docker-production
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: [self-hosted, linux, x64, local-docker]
+    defaults:
+      run:
+        working-directory: ./devops/docker
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out merged code
+        uses: actions/checkout@v4
+
+      - name: Verify Docker
+        run: |
+          docker version
+          docker compose version
+
+      - name: Build image
+        run: docker compose build
+
+      - name: Deploy container
+        run: docker compose up -d --remove-orphans
+
+      - name: Display deployment status
+        run: |
+          docker compose ps
+          docker compose logs --tail=50 app
+
+      - name: Remove unused images
+        run: docker image prune -f
