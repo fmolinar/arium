@@ -1,23 +1,13 @@
-# Build the React application
-FROM node:22-alpine AS build
+FROM node:22-alpine
 
 WORKDIR /app
 
-COPY frontend/package*.json ./
+COPY arium/package.json arium/package-lock.json ./
 RUN npm ci
 
-COPY frontend/ ./
+COPY arium/ ./
 RUN npm run build
 
+EXPOSE 4173
 
-# Serve the compiled application
-FROM nginx:1.27-alpine
-
-COPY devops/docker/nginx.conf /etc/nginx/conf.d/default.conf
-
-# Vite outputs to /app/dist
-COPY --from=build /app/dist /usr/share/nginx/html
-
-EXPOSE 80
-
-CMD ["nginx", "-g", "daemon off;"]
+CMD ["npm", "run", "preview", "--", "--host", "0.0.0.0"]
