@@ -1,0 +1,15 @@
+name: react-local-app
+
+services:
+  frontend:
+    build:
+      context: ../..
+      dockerfile: devops/docker/Dockerfile
+
+    image: react-local-app:latest
+    container_name: react-local-app
+
+    restart: unless-stopped
+
+    ports:
+      - "3000:80"
