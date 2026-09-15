@@ -1,0 +1,12 @@
+services:
+  app:
+    build:
+      context: ../..
+      dockerfile: devops/docker/Dockerfile
+
+    image: arium-react:latest
+    container_name: arium-react
+    restart: unless-stopped
+
+    ports:
+      - "3000:4173"
