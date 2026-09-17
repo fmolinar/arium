@@ -59,6 +59,8 @@ jobs:
       run:
         working-directory: ./devops/docker
     timeout-minutes: 15
+    env:
+      JWT_SECRET: ${{ secrets.JWT_SECRET }}
 
     steps:
       - name: Check out merged code
