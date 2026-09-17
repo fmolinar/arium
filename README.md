@@ -60,7 +60,7 @@ Go API (`backend/`) using [chi](https://github.com/go-chi/chi) and MongoDB.
 - Graceful shutdown on SIGINT/SIGTERM
 - Integration test suite in `tests/integration/` (see below)
 
-**Not yet implemented:** a backend Dockerfile/docker-compose service (only the frontend is containerized so far, under `devops/docker/`), and CI wiring for backend builds/tests.
+**Not yet implemented:** CI wiring for backend builds/tests (the deploy workflow only builds/deploys the compose stack as-is).
 
 **Running locally:**
 ```sh
@@ -76,3 +76,14 @@ cd backend
 go test -tags=integration ./tests/integration/...
 ```
 Plain `go test ./...` skips these (they're gated behind the `integration` build tag) so contributors without Docker aren't blocked.
+
+### Docker
+
+`devops/docker/compose.yaml` runs the full stack: `app` (React, port 3000), `backend` (Go API, port 8080, built from `devops/docker/Dockerfile.backend`), and `mongo` (port 27017).
+
+```sh
+cd devops/docker
+cp .env.example .env   # set JWT_SECRET
+docker compose up -d --build
+```
+`JWT_SECRET` is required — compose refuses to start the backend without it rather than running with a broken/empty secret.
