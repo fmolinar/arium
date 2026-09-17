@@ -1,4 +1,4 @@
-# Docker Compose configuration for the Arium React application
+# Docker Compose configuration for the Arium application
 networks:
   arium_network:
     driver: bridge
@@ -18,10 +18,26 @@ services:
     # Set port mapping for the application, mapping port 3000 on the host to port 4173 in the container
     ports:
       - "3000:4173"
+
+  backend:
+    networks:
+      - arium_network
+    build:
+      context: ../..
+      dockerfile: devops/docker/Dockerfile.backend
+    image: arium-backend:latest
+    container_name: arium-backend
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
     depends_on:
       - mongo
     environment:
+      - ADDRESS=:8080
+      - FRONTEND_URL=http://localhost:3000
       - MONGO_URI=mongodb://mongo:27017/arium
+      - MONGO_DB=arium
+      - JWT_SECRET=${JWT_SECRET:?JWT_SECRET must be set (see devops/docker/.env.example)}
 
   mongo:
     networks:
