@@ -7,11 +7,11 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/go-chi/chi/v5/middleware"
-	"github.com/go-chi/cors"
+	chimiddleware "github.com/go-chi/chi/v5/middleware"
 	"go.mongodb.org/mongo-driver/v2/mongo"
 
 	"github.com/fmolinar/arium/backend/internal/config"
+	"github.com/fmolinar/arium/backend/internal/middleware"
 )
 
 type Server struct {
@@ -39,30 +39,11 @@ func New(cfg config.Config, db *mongo.Client) *Server {
 func (s *Server) routes(cfg config.Config) http.Handler {
 	router := chi.NewRouter()
 
-	router.Use(middleware.RequestID)
-	router.Use(middleware.RealIP)
-	router.Use(middleware.Logger)
-	router.Use(middleware.Recoverer)
-	router.Use(middleware.Timeout(30 * time.Second))
+	router.Use(middleware.Logging)
+	router.Use(chimiddleware.Recoverer)
+	router.Use(chimiddleware.Timeout(30 * time.Second))
 
-	router.Use(cors.Handler(cors.Options{
-		AllowedOrigins: []string{cfg.FrontendURL},
-		AllowedMethods: []string{
-			http.MethodGet,
-			http.MethodPost,
-			http.MethodPut,
-			http.MethodPatch,
-			http.MethodDelete,
-			http.MethodOptions,
-		},
-		AllowedHeaders: []string{
-			"Accept",
-			"Authorization",
-			"Content-Type",
-		},
-		AllowCredentials: true,
-		MaxAge:           300,
-	}))
+	router.Use(middleware.CORS(cfg))
 
 	router.Get("/health", s.health)
 
