@@ -76,6 +76,11 @@ func (s *Server) ListenAndServe() error {
 	return s.httpServer.ListenAndServe()
 }
 
+// Handler returns the server's HTTP handler, for use with httptest in tests.
+func (s *Server) Handler() http.Handler {
+	return s.httpServer.Handler
+}
+
 func (s *Server) Shutdown(ctx context.Context) error {
 	return s.httpServer.Shutdown(ctx)
 }
