@@ -1,6 +1,11 @@
 # Docker Compose configuration for the Arium React application
+networks:
+  arium_network:
+    driver: bridge
 services:
   app:
+    networks:
+      - arium_network
     build:
       # Build context and Dockerfile path
       context: ../..
@@ -13,3 +18,23 @@ services:
     # Set port mapping for the application, mapping port 3000 on the host to port 4173 in the container
     ports:
       - "3000:4173"
+    depends_on:
+      - mongo
+    environment:
+      - MONGO_URI=mongodb://mongo:27017/arium
+
+  mongo:
+    networks:
+      - arium_network
+    image: mongo:latest
+    container_name: arium-mongo
+    restart: unless-stopped
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
+    environment:
+      - MONGO_INITDB_DATABASE=arium
+
+volumes:
+  mongo_data:
