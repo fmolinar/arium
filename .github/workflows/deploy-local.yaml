@@ -12,7 +12,48 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  test:
+    runs-on: [self-hosted]
+    defaults:
+      run:
+        working-directory: ./backend
+    timeout-minutes: 10
+
+    steps:
+      - name: Check out merged code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+
+      - name: Start MongoDB
+        run: docker run -d --rm --name arium-ci-mongo -p 27017:27017 mongo:latest
+
+      - name: Format check
+        run: test -z "$(gofmt -l .)"
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Build
+        run: go build ./...
+
+      - name: Unit tests
+        run: go test ./...
+
+      - name: Integration tests
+        run: go test -tags=integration ./tests/integration/...
+        env:
+          TEST_MONGO_URI: mongodb://localhost:27017
+
+      - name: Stop MongoDB
+        if: always()
+        run: docker rm -f arium-ci-mongo
+
   deploy:
+    needs: test
     runs-on: [self-hosted]
     defaults:
       run:
