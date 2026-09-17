@@ -2,7 +2,6 @@ package server
 
 import (
 	"context"
-	"encoding/json"
 	"net/http"
 	"time"
 
@@ -12,6 +11,8 @@ import (
 
 	"github.com/fmolinar/arium/backend/internal/config"
 	"github.com/fmolinar/arium/backend/internal/middleware"
+	"github.com/fmolinar/arium/backend/internal/user"
+	"github.com/fmolinar/arium/backend/pkg/response"
 )
 
 type Server struct {
@@ -19,14 +20,14 @@ type Server struct {
 	db         *mongo.Client
 }
 
-func New(cfg config.Config, db *mongo.Client) *Server {
+func New(cfg config.Config, db *mongo.Client, userHandler *user.Handler) *Server {
 	server := &Server{
 		db: db,
 	}
 
 	server.httpServer = &http.Server{
 		Addr:              cfg.Address,
-		Handler:           server.routes(cfg),
+		Handler:           server.routes(cfg, userHandler),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
 		WriteTimeout:      15 * time.Second,
@@ -36,7 +37,7 @@ func New(cfg config.Config, db *mongo.Client) *Server {
 	return server
 }
 
-func (s *Server) routes(cfg config.Config) http.Handler {
+func (s *Server) routes(cfg config.Config, userHandler *user.Handler) http.Handler {
 	router := chi.NewRouter()
 
 	router.Use(middleware.Logging)
@@ -48,8 +49,7 @@ func (s *Server) routes(cfg config.Config) http.Handler {
 	router.Get("/health", s.health)
 
 	router.Route("/api/v1", func(router chi.Router) {
-		// Mount feature routes here:
-		// router.Mount("/users", user.Routes(userHandler))
+		router.Mount("/users", user.Routes(userHandler, cfg))
 	})
 
 	return router
@@ -60,14 +60,14 @@ func (s *Server) health(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 
 	if err := s.db.Ping(ctx, nil); err != nil {
-		writeJSON(w, http.StatusServiceUnavailable, map[string]string{
+		response.JSON(w, http.StatusServiceUnavailable, map[string]string{
 			"status": "unhealthy",
 			"error":  "database unavailable",
 		})
 		return
 	}
 
-	writeJSON(w, http.StatusOK, map[string]string{
+	response.JSON(w, http.StatusOK, map[string]string{
 		"status": "healthy",
 	})
 }
@@ -78,11 +78,4 @@ func (s *Server) ListenAndServe() error {
 
 func (s *Server) Shutdown(ctx context.Context) error {
 	return s.httpServer.Shutdown(ctx)
-}
-
-func writeJSON(w http.ResponseWriter, status int, data any) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-
-	_ = json.NewEncoder(w).Encode(data)
 }
