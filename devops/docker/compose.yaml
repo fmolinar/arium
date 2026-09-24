@@ -39,20 +39,24 @@ services:
       - MONGO_DB=arium
       - JWT_SECRET=${JWT_SECRET:?JWT_SECRET must be set (see devops/docker/.env.example)}
 
-  # News collector: a one-shot job, not a long-running service. The profile keeps
-  # it out of `docker compose up`; run it with
-  #   docker compose --profile collector run --rm collector
+  # News collector. Runs on a schedule (3 times a day by default), keeps 30 days
+  # of data in the collector_data volume and skips duplicate articles.
+  # Collect once right now, alongside the scheduler:
+  #   docker compose run --rm collector -once
   collector:
-    profiles: ["collector"]
     build:
       context: ../..
       dockerfile: devops/docker/Dockerfile.collector
     image: arium-collector:latest
-    restart: "no"
+    container_name: arium-collector
+    restart: unless-stopped
     volumes:
       - collector_data:/data
     environment:
       - COLLECTOR_OUT_DIR=/data
+      - COLLECTOR_SCHEDULE=${COLLECTOR_SCHEDULE:-00:00,08:00,16:00}
+      - COLLECTOR_TIMEZONE=${COLLECTOR_TIMEZONE:-UTC}
+      - COLLECTOR_RETENTION=${COLLECTOR_RETENTION:-720h}
       - COLLECTOR_SINCE=${COLLECTOR_SINCE:-168h}
       - COLLECTOR_SOURCE_TIMEOUT=${COLLECTOR_SOURCE_TIMEOUT:-15s}
 

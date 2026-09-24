@@ -26,11 +26,12 @@ go test ./... -run TestName                             # single unit test
 go test -tags=integration ./tests/integration/...        # integration tests, needs a reachable MongoDB
 
 go run ./cmd/collector -dry-run                          # news collector: fetch live sources, print NDJSON only
-go run ./cmd/collector                                   # write to ./data (gitignored); -out -sources -since -timeout
+go run ./cmd/collector                                   # run once, write to ./data (gitignored)
+go run ./cmd/collector -schedule 00:00,08:00,16:00       # stay up, run daily at those times (-timezone, -once)
 ```
 
-In Docker the collector is a one-shot job behind the `collector` compose profile, writing to the `collector_data`
-volume: `cd devops/docker && docker compose --profile collector run --rm collector`.
+In Docker the `collector` service starts with the stack and runs on `COLLECTOR_SCHEDULE` (default 3×/day UTC),
+writing to the `collector_data` volume. One-off run: `cd devops/docker && docker compose run --rm collector -once`.
 
 Integration tests are gated behind the `integration` build tag so contributors without Docker aren't blocked
 by `go test ./...`. To run them, start Mongo first:
@@ -106,13 +107,21 @@ writes it to a directory, meant to be a Docker volume. Nothing reads its output 
 - `Collector.Collect` runs every `Source` concurrently, each with its own timeout and with panics recovered, then:
   `Normalize` (canonical URL, ID = first 16 hex chars of sha256(URL), plain-text title/summary, UTC) → drop
   articles older than `MaxAge` → deduplicate across sources → `Tagger.Tag` → `Persist`.
-- On-disk layout: `raw/<source>/<date>/<runID>.<ext>`, `articles/<date>/<runID>.ndjson`, `state/seen.json`,
+- `Persist` holds `Store.Lock` (a flock on `state/.lock`; `ErrLocked` if taken), writes raw payloads unless the
+  sha256 matches the source's last stored one (`state/raw.json`), writes articles whose ID isn't in
+  `state/seen.json` and whose `TitleKey` isn't in `state/titles.json`, runs `Store.Prune(retention)`, then writes
+  the manifest.
+- Retention (`-retention`, default 30 days) deletes day directories, manifests and state entries older than the
+  cutoff. `-since` must be ≤ `-retention`, which the CLI enforces; otherwise pruned dedup state would let old
+  articles back in. `TitleKey` returns "" for titles under 4 words, so generic titles are deduplicated by URL only.
+- On-disk layout: `raw/<source>/<date>/<runID>.<ext>`, `articles/<date>/<runID>.ndjson`, `state/*.json`,
   `runs/<runID>.json` (the manifest, written last). Writes are atomic (temp file + rename), and source names and
   run IDs must pass `collector.ValidName`.
+- Schedule mode (`-schedule`) is a loop around `Schedule.Next`, with no cron in the image. Missed runs aren't made
+  up, and a failed run is logged without stopping the loop.
 - A failed source is recorded in the manifest and the run continues. The CLI exits non-zero only when every
   source fails (`ErrAllSourcesFailed`), so a scheduler alerts on outages but not on one flaky feed.
-- Delivery is at-least-once across crashes, so consumers should deduplicate by `id`. Only one run at a time may
-  use a given output root.
+- Delivery is at-least-once across crashes, so consumers should deduplicate by `id`.
 - `collector.Article` uses the same JSON field names as the frontend news items (`arium/src/data/mockNews.js`),
   and tags are the slugs `devops|sre|gitops|devsecops`.
 - Hacker News is low-volume by design (expect 0–5 stories a week); the RSS feeds supply most articles.

@@ -92,16 +92,29 @@ tags it, and writes it to a directory:
 
 ```text
 data/
-├── raw/<source>/<date>/<runID>.xml|json   # upstream responses, verbatim
+├── raw/<source>/<date>/<runID>.xml|json   # upstream responses, verbatim; only stored when they changed
 ├── articles/<date>/<runID>.ndjson         # normalized articles first seen in this run
-├── state/seen.json                        # article IDs already written (dedup across runs)
-└── runs/<runID>.json                      # per-run manifest: counts and errors per source
+├── state/                                 # dedup state (seen URLs, titles, raw hashes) and run lock
+└── runs/<runID>.json                      # per-run manifest: counts, duplicates, errors, pruning
 ```
+
+**Run policy**
+- **Schedule:** in Docker it runs **3 times a day, every day**, at 00:00, 08:00 and 16:00 UTC. Runs missed
+  while the container is down are not made up.
+- **Duplicates are not saved.** An article is skipped if its canonical URL was already stored, or if its title
+  matches a stored one after lowercasing and removing punctuation and "Show HN:"-style prefixes. That catches
+  the same story cross-posted under different URLs. Titles under 4 words ("v3.2.0", "Release notes") are only
+  matched by URL. A raw payload identical to the last one stored for that source is skipped too.
+- **Retention: 30 days.** After each run, raw and article files, manifests and dedup state older than 30 days
+  are deleted. `-since` must be no longer than `-retention`, so a pruned article can't be picked up again.
+- A lock file stops a manual run and the scheduled one from writing at the same time; the second exits with an
+  error.
 
 ```sh
 cd backend
 go run ./cmd/collector -dry-run   # fetch and print articles as NDJSON, write nothing
-go run ./cmd/collector            # write to ./data (gitignored)
+go run ./cmd/collector            # run once, write to ./data (gitignored)
+go run ./cmd/collector -schedule 00:00,08:00,16:00   # stay up and run at these times daily
 ```
 
 | Flag | Env var | Default | |
@@ -110,9 +123,13 @@ go run ./cmd/collector            # write to ./data (gitignored)
 | `-sources` | `COLLECTOR_SOURCES` | built-in `sources.json` | custom feeds / HN queries |
 | `-since` | `COLLECTOR_SINCE` | `168h` | skip older articles |
 | `-timeout` | `COLLECTOR_SOURCE_TIMEOUT` | `15s` | per-source timeout |
+| `-retention` | `COLLECTOR_RETENTION` | `720h` (30 days) | delete stored data older than this; `0` keeps everything |
+| `-schedule` | `COLLECTOR_SCHEDULE` | empty (run once) | daily run times, `HH:MM,HH:MM,...` |
+| `-timezone` | `COLLECTOR_TIMEZONE` | `UTC` | time zone for `-schedule` |
+| `-once` | | | run once even if a schedule is set |
 
-A failing source is recorded in the run manifest without stopping the others; the process exits non-zero only
-when every source fails.
+A failing source is recorded in the run manifest without stopping the others. A single run exits non-zero only
+when every source fails; in schedule mode, a failed run is logged and the next one still happens.
 
 ### Docker
 
@@ -125,10 +142,10 @@ docker compose up -d --build
 ```
 `JWT_SECRET` is required — compose refuses to start the backend without it rather than running with a broken/empty secret.
 
-The news collector is a one-shot job behind the `collector` profile, so `up` doesn't start it. It writes to the
-`collector_data` named volume:
+`up` also starts the news `collector`, which runs on the schedule above and writes to the `collector_data` named
+volume. Change the run policy with the `COLLECTOR_*` variables in `.env` (see `.env.example`).
 ```sh
-docker compose --profile collector run --rm collector            # collect once
-docker compose --profile collector build collector               # rebuild after code changes
+docker compose logs -f collector                                  # see runs and the next scheduled time
+docker compose run --rm collector -once                           # collect once right now
 docker run --rm -v docker_collector_data:/data alpine ls -R /data # inspect the volume
 ```

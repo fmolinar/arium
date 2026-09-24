@@ -161,7 +161,7 @@ func TestPersist(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	manifest, err := Persist(store, result, collectNow.Add(5*time.Second))
+	manifest, err := Persist(store, result, collectNow.Add(5*time.Second), 0)
 	if err != nil {
 		t.Fatalf("Persist: %v", err)
 	}
@@ -187,5 +187,80 @@ func TestPersist(t *testing.T) {
 	}
 	if onDisk.Sources[1].Error != "timeout" || !onDisk.FinishedAt.Equal(collectNow.Add(5*time.Second)) {
 		t.Errorf("manifest on disk = %+v", onDisk)
+	}
+}
+
+func TestPersistSkipsUnchangedRawAndPrunes(t *testing.T) {
+	store, root := newTestStore(t)
+	src := &fakeSource{
+		name:     "blog",
+		raw:      Raw{Data: []byte("<rss/>"), Ext: "xml"},
+		articles: []Article{{Title: "Kubernetes news for this week", URL: "https://a.test/1"}},
+	}
+
+	// An old run's leftovers, due for pruning.
+	seed(t, root, "raw/blog/2026-08-01/20260801T000000Z-aaaaaa.xml")
+	seed(t, root, "runs/20260801T000000Z-aaaaaa.json")
+
+	c := newCollector(src)
+	retention := 30 * 24 * time.Hour
+
+	first, _ := c.Collect(context.Background())
+	m1, err := Persist(store, first, collectNow, retention)
+	if err != nil {
+		t.Fatalf("first Persist: %v", err)
+	}
+	if m1.Sources[0].RawUnchanged || m1.Sources[0].RawPath == "" || m1.ArticlesWritten != 1 {
+		t.Errorf("first manifest = %+v", m1)
+	}
+	if m1.Pruned == nil || m1.Pruned.Files != 2 {
+		t.Errorf("Pruned = %+v, want the 2 old files", m1.Pruned)
+	}
+
+	second, _ := c.Collect(context.Background())
+	m2, err := Persist(store, second, collectNow.Add(8*time.Hour), retention)
+	if err != nil {
+		t.Fatalf("second Persist: %v", err)
+	}
+	if !m2.Sources[0].RawUnchanged || m2.Sources[0].RawPath != "" {
+		t.Errorf("second run source = %+v, want raw skipped as unchanged", m2.Sources[0])
+	}
+	if m2.ArticlesWritten != 0 || m2.DuplicatesByURL != 1 {
+		t.Errorf("second manifest = %+v, want the article counted as a duplicate", m2)
+	}
+}
+
+func TestPersistWithoutRetentionDoesNotPrune(t *testing.T) {
+	store, root := newTestStore(t)
+	seed(t, root, "raw/blog/2020-01-01/20200101T000000Z-aaaaaa.xml")
+
+	result, _ := newCollector(&fakeSource{name: "blog"}).Collect(context.Background())
+	m, err := Persist(store, result, collectNow, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if m.Pruned != nil || !exists(root, "raw/blog/2020-01-01/20200101T000000Z-aaaaaa.xml") {
+		t.Errorf("retention 0 pruned data: %+v", m.Pruned)
+	}
+}
+
+func TestPersistLocked(t *testing.T) {
+	store, root := newTestStore(t)
+
+	unlock, err := store.Lock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer unlock()
+
+	other, _ := NewStore(root)
+	result, _ := newCollector(&fakeSource{name: "blog"}).Collect(context.Background())
+
+	if _, err := Persist(other, result, collectNow, 0); !errors.Is(err, ErrLocked) {
+		t.Errorf("err = %v, want ErrLocked", err)
+	}
+	if exists(root, filepath.Join("runs", result.Run.ID+".json")) {
+		t.Error("manifest written without the lock")
 	}
 }
