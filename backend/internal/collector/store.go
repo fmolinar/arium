@@ -52,7 +52,8 @@ func (r Run) day() string {
 type SourceResult struct {
 	Name     string `json:"name"`
 	Fetched  int    `json:"fetched"`
-	Rejected int    `json:"rejected"`
+	Rejected int    `json:"rejected"` // failed normalization (no title, bad URL)
+	Stale    int    `json:"stale"`    // older than the collector's MaxAge
 	RawPath  string `json:"rawPath,omitempty"`
 	Error    string `json:"error,omitempty"`
 }
@@ -70,7 +71,7 @@ type Manifest struct {
 
 // Store writes collector output under a root directory:
 //
-//	raw/<source>/<YYYY-MM-DD>/<runID>.json   upstream payloads, verbatim
+//	raw/<source>/<YYYY-MM-DD>/<runID>.<ext>  upstream payloads, verbatim
 //	articles/<YYYY-MM-DD>/<runID>.ndjson     normalized articles new in this run
 //	state/seen.json                          article ID → first-seen time
 //	runs/<runID>.json                        run manifests
@@ -92,14 +93,14 @@ func NewStore(root string) (*Store, error) {
 
 // WriteRaw stores a source's upstream payload and returns its path relative to
 // the store root.
-func (s *Store) WriteRaw(run Run, source string, data []byte) (string, error) {
-	if !ValidName(run.ID) || !ValidName(source) {
-		return "", fmt.Errorf("invalid run ID %q or source name %q", run.ID, source)
+func (s *Store) WriteRaw(run Run, source string, raw Raw) (string, error) {
+	if !ValidName(run.ID) || !ValidName(source) || !ValidName(raw.Ext) {
+		return "", fmt.Errorf("invalid run ID %q, source name %q or extension %q", run.ID, source, raw.Ext)
 	}
 
-	rel := filepath.Join("raw", source, run.day(), run.ID+".json")
+	rel := filepath.Join("raw", source, run.day(), run.ID+"."+raw.Ext)
 
-	return rel, s.writeFile(rel, data)
+	return rel, s.writeFile(rel, raw.Data)
 }
 
 // WriteArticles stores the articles not seen in any previous run, and returns

@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <title>Example GitOps Releases</title>
+  <id>urn:example:releases</id>
+  <updated>2026-09-23T10:00:00Z</updated>
+  <entry>
+    <title>v3.2.0</title>
+    <id>urn:example:release:3.2.0</id>
+    <link rel="alternate" href="https://git.example.com/project/releases/tag/v3.2.0"/>
+    <updated>2026-09-23T10:00:00Z</updated>
+    <content type="html">&lt;p&gt;Adds OCI Helm chart support.&lt;/p&gt;</content>
+  </entry>
+</feed>
