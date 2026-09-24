@@ -39,6 +39,23 @@ services:
       - MONGO_DB=arium
       - JWT_SECRET=${JWT_SECRET:?JWT_SECRET must be set (see devops/docker/.env.example)}
 
+  # News collector: a one-shot job, not a long-running service. The profile keeps
+  # it out of `docker compose up`; run it with
+  #   docker compose --profile collector run --rm collector
+  collector:
+    profiles: ["collector"]
+    build:
+      context: ../..
+      dockerfile: devops/docker/Dockerfile.collector
+    image: arium-collector:latest
+    restart: "no"
+    volumes:
+      - collector_data:/data
+    environment:
+      - COLLECTOR_OUT_DIR=/data
+      - COLLECTOR_SINCE=${COLLECTOR_SINCE:-168h}
+      - COLLECTOR_SOURCE_TIMEOUT=${COLLECTOR_SOURCE_TIMEOUT:-15s}
+
   mongo:
     networks:
       - arium_network
@@ -54,3 +71,4 @@ services:
 
 volumes:
   mongo_data:
+  collector_data:

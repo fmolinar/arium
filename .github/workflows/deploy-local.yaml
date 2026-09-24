@@ -73,8 +73,10 @@ jobs:
           docker version
           docker compose version
 
-      - name: Build image
-        run: docker compose build
+      - name: Build images
+        # --profile collector also rebuilds the on-demand collector image; `up`
+        # below doesn't enable the profile, so the collector isn't started.
+        run: docker compose --profile collector build
 
       - name: Deploy container
         run: docker compose up -d --remove-orphans
