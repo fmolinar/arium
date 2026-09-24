@@ -1,6 +1,17 @@
 # Arium
 Project to showcase my skills in frontend, backend, SRE and DevOps.
 
+## Components
+
+Each part of the project has its own README describing its stack and how it works:
+
+| Directory | What it is |
+|---|---|
+| [`arium/`](arium) | React 19 + Vite + Tailwind frontend |
+| [`backend/`](backend) | Go API (users, JWT auth, MongoDB) and the news collector, with data-flow diagrams |
+| [`devops/`](devops) | CI/CD pipeline (GitHub Actions, self-hosted runner) |
+| [`devops/docker/`](devops/docker) | Dockerfiles and the Compose stack |
+
 ## Structure of the project
 
 ```text
