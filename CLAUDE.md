@@ -29,6 +29,9 @@ go run ./cmd/collector -dry-run                          # news collector: fetch
 go run ./cmd/collector                                   # write to ./data (gitignored); -out -sources -since -timeout
 ```
 
+In Docker the collector is a one-shot job behind the `collector` compose profile, writing to the `collector_data`
+volume: `cd devops/docker && docker compose --profile collector run --rm collector`.
+
 Integration tests are gated behind the `integration` build tag so contributors without Docker aren't blocked
 by `go test ./...`. To run them, start Mongo first:
 
