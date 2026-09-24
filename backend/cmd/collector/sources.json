@@ -9,5 +9,23 @@
     { "name": "grafana-blog", "url": "https://grafana.com/blog/index.xml", "tags": ["sre"] },
     { "name": "openssf-blog", "url": "https://openssf.org/feed/", "tags": ["devsecops"] },
     { "name": "google-security-blog", "url": "https://security.googleblog.com/feeds/posts/default", "tags": ["devsecops"] }
-  ]
+  ],
+  "hackernews": {
+    "minPoints": 20,
+    "queries": [
+      { "query": "kubernetes", "tags": ["devops"] },
+      { "query": "docker", "tags": ["devops"] },
+      { "query": "terraform", "tags": ["devops"] },
+      { "query": "github actions", "tags": ["devops"] },
+      { "query": "gitops", "tags": ["gitops"] },
+      { "query": "argo cd", "tags": ["gitops"] },
+      { "query": "fluxcd", "tags": ["gitops"] },
+      { "query": "observability", "tags": ["sre"] },
+      { "query": "opentelemetry", "tags": ["sre"] },
+      { "query": "outage", "tags": ["sre"] },
+      { "query": "devsecops", "tags": ["devsecops"] },
+      { "query": "supply chain attack", "tags": ["devsecops"] },
+      { "query": "vulnerability", "tags": ["devsecops"] }
+    ]
+  }
 }

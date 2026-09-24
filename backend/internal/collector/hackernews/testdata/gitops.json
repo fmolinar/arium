@@ -1,0 +1,24 @@
+{
+  "hits": [
+    {
+      "objectID": "1002",
+      "title": "Ask HN: How do you run Argo CD at scale?",
+      "url": null,
+      "created_at_i": 1790064000,
+      "points": 40,
+      "num_comments": 60,
+      "story_text": "<p>We have 300 clusters &amp; growing.</p>"
+    },
+    {
+      "objectID": "1003",
+      "title": "GitOps without a controller",
+      "url": "https://example.org/gitops",
+      "created_at_i": 0,
+      "points": 22,
+      "num_comments": 3,
+      "story_text": ""
+    }
+  ],
+  "nbHits": 2,
+  "page": 0
+}
