@@ -1,0 +1,24 @@
+{
+  "hits": [
+    {
+      "objectID": "1001",
+      "title": "How Kubernetes probes work",
+      "url": "https://blog.example.com/probes",
+      "created_at_i": 1790150400,
+      "points": 143,
+      "num_comments": 25,
+      "story_text": null
+    },
+    {
+      "objectID": "1002",
+      "title": "Ask HN: How do you run Argo CD at scale?",
+      "url": null,
+      "created_at_i": 1790064000,
+      "points": 40,
+      "num_comments": 60,
+      "story_text": "<p>We have 300 clusters &amp; growing.</p>"
+    }
+  ],
+  "nbHits": 2,
+  "page": 0
+}

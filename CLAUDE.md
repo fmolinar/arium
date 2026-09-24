@@ -8,7 +8,7 @@ Arium is a portfolio project showing frontend, backend, SRE and DevOps work: a D
 - `backend/` — Go module `github.com/fmolinar/arium/backend` (chi, mongo-driver v2, golang-jwt v5).
   - `cmd/api` — HTTP API entry point.
   - `internal/<domain>/` — one package per domain, split into `model.go`, `repository.go` (Mongo), `service.go` (logic), `handler.go` (HTTP), `routes.go`. Follow this split for new domains.
-  - `cmd/collector` + `internal/collector/` — news collection CLI: fetches sources, then normalizes, tags and stores them on disk. Sources live in subpackages (`rss/`). The default feed list is `cmd/collector/sources.json`, embedded into the binary.
+  - `cmd/collector` + `internal/collector/` — news collection CLI: fetches sources, then normalizes, tags and stores them on disk. Sources live in subpackages: `rss/` (RSS/Atom feeds) and `hackernews/` (Algolia HN Search, keyword queries). The default source list is `cmd/collector/sources.json`, embedded into the binary.
   - `pkg/response` — use `response.JSON` / `response.Error` for all HTTP responses.
   - `tests/integration/` — httptest suite against a real Mongo, behind the `integration` build tag.
 - `devops/docker/` — `compose.yaml` (app :3000, backend :8080, mongo :27017) and Dockerfiles. `devops/jenkins` and `devops/kubernetes` are empty placeholders.
@@ -46,6 +46,7 @@ Full stack: `cd devops/docker && cp .env.example .env` (set `JWT_SECRET`), then 
 - On-disk layout under the output root: `raw/<source>/<date>/<runID>.<ext>`, `articles/<date>/<runID>.ndjson`, `state/seen.json`, `runs/<runID>.json`. Writes are atomic (temp file + rename). Source names and run IDs must pass `ValidName`.
 - `Collect` ignores articles from failed sources and drops any older than `MaxAge`. It returns `ErrAllSourcesFailed` only when every source failed, and the CLI exits non-zero only in that case. `Persist` then writes the files.
 - Delivery is at-least-once across crashes, so consumers should deduplicate by `id`. Only one run may use a given output root at a time.
+- The Hacker News source is low-volume by design: the ≥20-point filter keeps out noise, and it only requests stories newer than `-since`. Expect 0–5 HN stories per week, not dozens.
 - Tests must not touch the network: use `httptest.Server` with files in `testdata/`, and `t.TempDir()` for storage.
 
 ## Git

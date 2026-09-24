@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/fmolinar/arium/backend/internal/collector"
+	"github.com/fmolinar/arium/backend/internal/collector/hackernews"
 	"github.com/fmolinar/arium/backend/internal/collector/rss"
 )
 
@@ -45,6 +46,11 @@ func main() {
 	var srcs []collector.Source
 	for _, feed := range cfg.Feeds {
 		srcs = append(srcs, rss.New(feed, client))
+	}
+	if cfg.HackerNews != nil {
+		hn := *cfg.HackerNews
+		hn.MaxAge = *maxAge
+		srcs = append(srcs, hackernews.New(hn, client))
 	}
 
 	c := &collector.Collector{
