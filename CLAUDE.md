@@ -24,6 +24,9 @@ gofmt -l .                     # CI fails if this outputs anything
 go test ./...                                          # unit tests (integration tests are skipped)
 go test ./... -run TestName                             # single unit test
 go test -tags=integration ./tests/integration/...        # integration tests, needs a reachable MongoDB
+
+go run ./cmd/collector -dry-run                          # news collector: fetch live sources, print NDJSON only
+go run ./cmd/collector                                   # write to ./data (gitignored); -out -sources -since -timeout
 ```
 
 Integration tests are gated behind the `integration` build tag so contributors without Docker aren't blocked
@@ -86,6 +89,32 @@ the bearer token and injects the user ID/role into the request context, readable
 `internal/config.Load()` reads env vars once at startup (`ADDRESS`, `FRONTEND_URL`, `MONGO_URI`, `MONGO_DB`,
 `JWT_SECRET`) and fails fast (`log.Fatal`) if `JWT_SECRET` is unset. `Config` is passed explicitly through the
 call chain rather than accessed as a global.
+
+### News collector
+
+`cmd/collector` is a standalone CLI (separate from the API) that ingests DevOps/SRE/GitOps/DevSecOps news and
+writes it to a directory, meant to be a Docker volume. Nothing reads its output yet; loading into Mongo and a
+`GET /api/v1/news` endpoint come later.
+
+- Sources live in `internal/collector/<source>/`: `rss` (RSS/Atom feeds via gofeed) and `hackernews` (Algolia
+  HN Search, title keyword queries, ≥20 points, only stories newer than `-since`). The default source list is
+  `cmd/collector/sources.json`, embedded with `go:embed`; `-sources` points at a replacement. Each flag also has a
+  `COLLECTOR_*` env var.
+- `Collector.Collect` runs every `Source` concurrently, each with its own timeout and with panics recovered, then:
+  `Normalize` (canonical URL, ID = first 16 hex chars of sha256(URL), plain-text title/summary, UTC) → drop
+  articles older than `MaxAge` → deduplicate across sources → `Tagger.Tag` → `Persist`.
+- On-disk layout: `raw/<source>/<date>/<runID>.<ext>`, `articles/<date>/<runID>.ndjson`, `state/seen.json`,
+  `runs/<runID>.json` (the manifest, written last). Writes are atomic (temp file + rename), and source names and
+  run IDs must pass `collector.ValidName`.
+- A failed source is recorded in the manifest and the run continues. The CLI exits non-zero only when every
+  source fails (`ErrAllSourcesFailed`), so a scheduler alerts on outages but not on one flaky feed.
+- Delivery is at-least-once across crashes, so consumers should deduplicate by `id`. Only one run at a time may
+  use a given output root.
+- `collector.Article` uses the same JSON field names as the frontend news items (`arium/src/data/mockNews.js`),
+  and tags are the slugs `devops|sre|gitops|devsecops`.
+- Hacker News is low-volume by design (expect 0–5 stories a week); the RSS feeds supply most articles.
+- Collector tests never touch the network: they use `httptest.Server` with `testdata/` fixtures, and `t.TempDir()`
+  for storage.
 
 ### CI/CD
 
