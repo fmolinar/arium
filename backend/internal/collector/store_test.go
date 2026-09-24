@@ -76,12 +76,12 @@ func TestWriteRaw(t *testing.T) {
 	store, root := newTestStore(t)
 	run := testRun("run1")
 
-	rel, err := store.WriteRaw(run, "kubernetes-blog", []byte("<rss/>"))
+	rel, err := store.WriteRaw(run, "kubernetes-blog", Raw{Data: []byte("<rss/>"), Ext: "xml"})
 	if err != nil {
 		t.Fatalf("WriteRaw: %v", err)
 	}
 
-	want := filepath.Join("raw", "kubernetes-blog", "2026-09-24", "run1.json")
+	want := filepath.Join("raw", "kubernetes-blog", "2026-09-24", "run1.xml")
 	if rel != want {
 		t.Errorf("path = %q, want %q", rel, want)
 	}
@@ -96,11 +96,14 @@ func TestWriteRejectsUnsafeNames(t *testing.T) {
 	store, root := newTestStore(t)
 
 	for _, name := range []string{"", "../escape", "a/b", ".hidden", "a b"} {
-		if _, err := store.WriteRaw(testRun("run1"), name, nil); err == nil {
+		if _, err := store.WriteRaw(testRun("run1"), name, Raw{Ext: "json"}); err == nil {
 			t.Errorf("WriteRaw accepted source name %q", name)
 		}
-		if _, err := store.WriteRaw(testRun(name), "src", nil); err == nil {
+		if _, err := store.WriteRaw(testRun(name), "src", Raw{Ext: "json"}); err == nil {
 			t.Errorf("WriteRaw accepted run ID %q", name)
+		}
+		if _, err := store.WriteRaw(testRun("run1"), "src", Raw{Ext: name}); err == nil {
+			t.Errorf("WriteRaw accepted extension %q", name)
 		}
 		if _, _, err := store.WriteArticles(testRun(name), nil); err == nil {
 			t.Errorf("WriteArticles accepted run ID %q", name)
@@ -235,7 +238,7 @@ func TestWritesLeaveNoTempFiles(t *testing.T) {
 	store, root := newTestStore(t)
 	run := testRun("run1")
 
-	if _, err := store.WriteRaw(run, "src", []byte("x")); err != nil {
+	if _, err := store.WriteRaw(run, "src", Raw{Data: []byte("x"), Ext: "json"}); err != nil {
 		t.Fatal(err)
 	}
 	if _, _, err := store.WriteArticles(run, []Article{article("https://a.test/1")}); err != nil {

@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>Example Kubernetes Blog</title>
+    <link>https://blog.example.com/</link>
+    <description>Fixture feed for collector tests</description>
+    <item>
+      <title>Kubernetes 1.35: in-place resize goes GA</title>
+      <link>https://blog.example.com/2026/09/k8s-135/?utm_source=rss</link>
+      <pubDate>Tue, 22 Sep 2026 14:00:00 +0000</pubDate>
+      <description>&lt;p&gt;Pods can now be &lt;b&gt;resized&lt;/b&gt; without a restart.&lt;/p&gt;</description>
+    </item>
+    <item>
+      <title>Community meeting notes</title>
+      <link>https://blog.example.com/2026/09/meeting/</link>
+      <pubDate>Mon, 21 Sep 2026 09:30:00 +0000</pubDate>
+      <description>Monthly roundup.</description>
+    </item>
+    <item>
+      <title></title>
+      <link>https://blog.example.com/2026/09/untitled/</link>
+      <pubDate>Sun, 20 Sep 2026 09:30:00 +0000</pubDate>
+    </item>
+  </channel>
+</rss>

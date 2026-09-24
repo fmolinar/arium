@@ -1,0 +1,13 @@
+{
+  "feeds": [
+    { "name": "kubernetes-blog", "url": "https://kubernetes.io/feed.xml", "tags": ["devops"] },
+    { "name": "cncf-blog", "url": "https://www.cncf.io/feed/" },
+    { "name": "docker-blog", "url": "https://www.docker.com/blog/feed/", "tags": ["devops"] },
+    { "name": "argo-blog", "url": "https://blog.argoproj.io/feed", "tags": ["gitops"] },
+    { "name": "fluxcd-blog", "url": "https://fluxcd.io/blog/index.xml", "tags": ["gitops"] },
+    { "name": "opentelemetry-blog", "url": "https://opentelemetry.io/blog/index.xml", "tags": ["sre"] },
+    { "name": "grafana-blog", "url": "https://grafana.com/blog/index.xml", "tags": ["sre"] },
+    { "name": "openssf-blog", "url": "https://openssf.org/feed/", "tags": ["devsecops"] },
+    { "name": "google-security-blog", "url": "https://security.googleblog.com/feeds/posts/default", "tags": ["devsecops"] }
+  ]
+}
