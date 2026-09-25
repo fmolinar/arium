@@ -145,6 +145,7 @@ go run ./cmd/collector -schedule 00:00,08:00,16:00   # stay up and run at these 
 | `-retention` | `COLLECTOR_RETENTION` | `720h` (30 days) | delete stored data older than this; `0` keeps everything |
 | `-schedule` | `COLLECTOR_SCHEDULE` | empty (run once) | daily run times, `HH:MM,HH:MM,...` |
 | `-timezone` | `COLLECTOR_TIMEZONE` | `UTC` | time zone for `-schedule` |
+| `-run-on-start` | `COLLECTOR_RUN_ON_START` | `false` | with `-schedule`, also run once at startup |
 | `-mongo-uri` | `MONGO_URI` | empty (no sync) | sync stored articles into this MongoDB after each run |
 | `-mongo-db` | `MONGO_DB` | `arium` | database for `-mongo-uri` |
 | `-healthcheck` | | | exit non-zero if a scheduled run is over 10 minutes overdue |

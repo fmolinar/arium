@@ -30,8 +30,8 @@ go run ./cmd/collector                                   # run once, write to ./
 go run ./cmd/collector -schedule 00:00,08:00,16:00       # stay up, run daily at those times (-timezone, -once)
 ```
 
-In Docker the `collector` service starts with the stack and runs on `COLLECTOR_SCHEDULE` (default 3×/day UTC),
-writing to the `collector_data` volume. Its healthcheck (`collector -healthcheck`) reads a heartbeat file the
+In Docker the `collector` service starts with the stack, runs once at startup and then on `COLLECTOR_SCHEDULE`
+(default 3×/day UTC), writing to the `collector_data` volume. Its healthcheck (`collector -healthcheck`) reads a heartbeat file the
 scheduler writes before each wait and fails once a run is more than 10 minutes overdue. One-off run:
 `cd devops/docker && docker compose run --rm collector -once`.
 
@@ -131,8 +131,14 @@ then syncs the stored articles into Mongo's `news` collection, which the API ser
   JSON); `cmd/collector` converts `collector.Article` to `news.Article`, so `internal/collector` never imports Mongo.
 - `GET /api/v1/news?tag=&limit=&cursor=` is public, newest first, and pages with an opaque `nextCursor` over
   (`published_at`, `_id`) so ties on publish time don't skip or repeat articles.
-- `collector.Article` uses the same JSON field names as the frontend news items (`arium/src/data/mockNews.js`),
-  and tags are the slugs `devops|sre|gitops|devsecops`.
+- `collector.Article` uses the same JSON field names as the frontend news items, and tags are the slugs
+  `devops|sre|gitops|devsecops` (`TOPICS` in `arium/src/api/news.js`).
+- The frontend calls the API at relative `/api` URLs. `vite` and `vite preview` proxy them to `API_PROXY_TARGET`
+  (default `http://localhost:8080`; `http://backend:8080` in Compose), so there's no API URL in the build.
+  `NewsHub` pages through `useNews` (server-side tag filter, `nextCursor`), and `NewsTicker` fetches the 5 newest.
+- In Compose the collector also runs once at startup (`COLLECTOR_RUN_ON_START=true`, flag `-run-on-start`), so a
+  fresh stack gets news without waiting for the next slot. It writes a heartbeat due now before that run, so the
+  healthcheck gives it the usual 10-minute grace.
 - Hacker News is low-volume by design (expect 0–5 stories a week); the RSS feeds supply most articles.
 - Collector tests never touch the network: they use `httptest.Server` with `testdata/` fixtures, and `t.TempDir()`
   for storage.
@@ -154,20 +160,17 @@ Decisions already made (don't re-litigate): MongoDB stays the store for news (al
 data, a few thousand docs at most; no Postgres/Elasticsearch). Observability uses OpenTelemetry with the Grafana
 stack, not ELK (Elasticsearch is too heavy for the Docker Desktop host, and ELK is log-centric).
 
-1. **Frontend on real news.** Replace `MOCK_NEWS` in `arium/src/pages/NewsHub.jsx` and
-   `arium/src/components/NewsTicker.jsx` with `GET /api/v1/news` (`tag` filter, `nextCursor` paging). Keep
-   `TOPICS` in `mockNews.js` or move it next to the API client.
-2. **Structured logging.** Switch the API and collector to `log/slog` with JSON output, carrying the chi request
+1. **Structured logging.** Switch the API and collector to `log/slog` with JSON output, carrying the chi request
    ID and, once tracing lands, trace/span IDs. Replace the plain-text `middleware.Logging`.
-3. **Metrics + Grafana.** Instrument with OpenTelemetry (Prometheus exporter or OTLP → Prometheus). API: RED
+2. **Metrics + Grafana.** Instrument with OpenTelemetry (Prometheus exporter or OTLP → Prometheus). API: RED
    metrics per route (rate, errors, duration). Collector: articles per run, per-source failures, run duration, and
    a last-successful-run timestamp (which should eventually replace the heartbeat-file healthcheck). Add Grafana with
    provisioned datasources and dashboards committed to the repo. `grafana/otel-lgtm` is fine to start with; split
    into separate Prometheus/Loki/Tempo/Grafana services later to show the production shape.
-4. **Logs in Loki**, shipped from container stdout.
-5. **Traces in Tempo**: OTel HTTP middleware on chi plus the MongoDB driver instrumentation, so a request is
+3. **Logs in Loki**, shipped from container stdout.
+4. **Traces in Tempo**: OTel HTTP middleware on chi plus the MongoDB driver instrumentation, so a request is
    traceable browser → API → Mongo.
-6. **SLOs and alerting**: availability/latency SLOs for the API, burn-rate alerts, and a collector staleness alert
+5. **SLOs and alerting**: availability/latency SLOs for the API, burn-rate alerts, and a collector staleness alert
    (no successful run in ~10h) via Grafana alerting or Alertmanager.
 
 Also open: frontend lint/build in CI, a post-deploy `/health` check in the deploy job, and the planned

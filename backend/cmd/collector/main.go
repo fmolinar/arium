@@ -3,7 +3,7 @@
 // volume in deployment). See internal/collector for the on-disk layout.
 //
 // By default it runs once and exits. With -schedule it stays up and runs at
-// the given times every day. With -mongo-uri each run also syncs the stored
+// the given times every day, plus once at startup with -run-on-start. With -mongo-uri each run also syncs the stored
 // articles into MongoDB for the API to serve.
 package main
 
@@ -18,6 +18,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"syscall"
 	"time"
 	_ "time/tzdata" // -timezone works in minimal images without zoneinfo
@@ -49,6 +50,7 @@ func main() {
 		schedule  = flag.String("schedule", os.Getenv("COLLECTOR_SCHEDULE"), `daily run times, e.g. "00:00,08:00,16:00"; empty runs once (env COLLECTOR_SCHEDULE)`)
 		timezone  = flag.String("timezone", getEnv("COLLECTOR_TIMEZONE", "UTC"), "time zone for -schedule, e.g. America/Los_Angeles (env COLLECTOR_TIMEZONE)")
 		once      = flag.Bool("once", false, "run once and exit, even if a schedule is configured")
+		onStart   = flag.Bool("run-on-start", getEnvBool("COLLECTOR_RUN_ON_START", false), "with -schedule, also run once at startup instead of waiting for the first scheduled time (env COLLECTOR_RUN_ON_START)")
 		dryRun    = flag.Bool("dry-run", false, "print articles as NDJSON to stdout instead of writing to -out")
 
 		mongoURI = flag.String("mongo-uri", os.Getenv("MONGO_URI"), "sync stored articles into this MongoDB after each run; empty disables (env MONGO_URI)")
@@ -139,14 +141,28 @@ func main() {
 		log.Fatalf("-schedule: %v", err)
 	}
 
-	runScheduled(ctx, c, opts, sched)
+	runScheduled(ctx, c, opts, sched, *onStart)
 }
 
 // runScheduled runs the collector at every scheduled time until ctx is
-// cancelled. A failed run is logged and the schedule carries on. Runs missed
-// while the process was down are not caught up.
-func runScheduled(ctx context.Context, c *collector.Collector, opts options, sched collector.Schedule) {
+// cancelled, and first once right away if runNow is set. A failed run is
+// logged and the schedule carries on. Runs missed while the process was down
+// are not caught up.
+func runScheduled(ctx context.Context, c *collector.Collector, opts options, sched collector.Schedule, runNow bool) {
 	log.Printf("scheduled: daily at %s, retention %s", sched, opts.retention)
+
+	if runNow {
+		// A heartbeat due now gives the startup run the same grace period as
+		// a scheduled one before -healthcheck reports it as hung.
+		if err := writeHeartbeat(opts.healthFile, time.Now()); err != nil {
+			log.Printf("heartbeat: %v", err)
+		}
+
+		log.Print("startup run")
+		if err := runOnce(ctx, c, opts); err != nil {
+			log.Printf("run failed: %v", err)
+		}
+	}
 
 	for {
 		next := sched.Next(time.Now())
@@ -242,6 +258,20 @@ func getEnv(key, fallback string) string {
 	}
 
 	return fallback
+}
+
+func getEnvBool(key string, fallback bool) bool {
+	value := os.Getenv(key)
+	if value == "" {
+		return fallback
+	}
+
+	b, err := strconv.ParseBool(value)
+	if err != nil {
+		log.Fatalf("collector: %s: %v", key, err)
+	}
+
+	return b
 }
 
 func getEnvDuration(key string, fallback time.Duration) time.Duration {
