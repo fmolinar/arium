@@ -11,6 +11,7 @@ import (
 
 	"github.com/fmolinar/arium/backend/internal/config"
 	"github.com/fmolinar/arium/backend/internal/database"
+	"github.com/fmolinar/arium/backend/internal/news"
 	"github.com/fmolinar/arium/backend/internal/server"
 	"github.com/fmolinar/arium/backend/internal/user"
 )
@@ -39,7 +40,14 @@ func main() {
 
 	userHandler := user.NewHandler(user.NewService(userRepo, cfg))
 
-	app := server.New(cfg, db, userHandler)
+	newsRepo := news.NewRepository(db.Database(cfg.MongoDatabase))
+	if err := newsRepo.EnsureIndexes(ctx); err != nil {
+		log.Fatal(err)
+	}
+
+	newsHandler := news.NewHandler(news.NewService(newsRepo))
+
+	app := server.New(cfg, db, userHandler, newsHandler)
 
 	go func() {
 		log.Printf("API listening on %s", cfg.Address)

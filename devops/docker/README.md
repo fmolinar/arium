@@ -14,11 +14,13 @@ flowchart LR
 
     internet["RSS feeds + Hacker News"] -- "HTTPS" --> collector["collector<br/>arium-collector<br/>3 runs/day"]
     collector --- colVol[("volume: collector_data")]
+    collector -- "sync news" --> mongo
 
     subgraph net ["network: arium_network"]
         app
         backend
         mongo
+        collector
     end
 ```
 
@@ -30,8 +32,8 @@ flowchart LR
 | `collector` | `arium-collector` ([`Dockerfile.collector`](Dockerfile.collector)) | none | `collector_data` → `/data` | unless-stopped |
 
 The browser calls the API directly on port 8080, so the browser, not the `app` container, is what talks to
-`backend`. The API's CORS policy allows `FRONTEND_URL` (`http://localhost:3000`). The collector only makes
-outbound HTTPS requests and uses the default network. Its healthcheck runs `collector -healthcheck` every minute
+`backend`. The API's CORS policy allows `FRONTEND_URL` (`http://localhost:3000`). The collector fetches
+sources over HTTPS and, after each run, syncs articles into Mongo's `news` collection over `arium_network`. Its healthcheck runs `collector -healthcheck` every minute
 and marks the container unhealthy once a scheduled run is more than 10 minutes overdue.
 
 ## Images

@@ -67,12 +67,12 @@ Runs `app` (React, host port 3000 → container 4173), `backend` (Go API, port 8
 
 ### Backend request flow
 
-`cmd/api/main.go` wires everything by hand (no DI framework): loads config → connects Mongo → constructs a
-`user.Repository` → `user.Service` → `user.Handler` → passes the handler into `server.New`. `server.go` builds
+`cmd/api/main.go` wires everything by hand (no DI framework): loads config → connects Mongo → for each feature
+constructs `Repository` (and calls `EnsureIndexes`) → `Service` → `Handler` → passes the handlers into `server.New`. `server.go` builds
 the chi router, mounts global middleware (logging, recoverer, timeout, CORS), and mounts feature routers under
 `/api/v1/...`.
 
-Each feature (currently just `user`) follows a fixed layering, all under `internal/<feature>/`:
+Each feature (`user`, `news`) follows a fixed layering, all under `internal/<feature>/`:
 
 - `model.go` — domain type plus request/response DTOs
 - `repository.go` — MongoDB access
@@ -99,8 +99,8 @@ call chain rather than accessed as a global.
 ### News collector
 
 `cmd/collector` is a standalone CLI (separate from the API) that ingests DevOps/SRE/GitOps/DevSecOps news and
-writes it to a directory, meant to be a Docker volume. Nothing reads its output yet; loading into Mongo and a
-`GET /api/v1/news` endpoint come later.
+writes it to a directory, meant to be a Docker volume. With `-mongo-uri` (env `MONGO_URI`, set in Compose) each run
+then syncs the stored articles into Mongo's `news` collection, which the API serves from `GET /api/v1/news`.
 
 - Sources live in `internal/collector/<source>/`: `rss` (RSS/Atom feeds via gofeed) and `hackernews` (Algolia
   HN Search, title keyword queries, ≥20 points, only stories newer than `-since`). The default source list is
@@ -124,6 +124,13 @@ writes it to a directory, meant to be a Docker volume. Nothing reads its output 
 - A failed source is recorded in the manifest and the run continues. The CLI exits non-zero only when every
   source fails (`ErrAllSourcesFailed`), so a scheduler alerts on outages but not on one flaky feed.
 - Delivery is at-least-once across crashes, so consumers should deduplicate by `id`.
+- The Mongo sync (`cmd/collector/sync.go`) re-imports every article on the volume fetched within `-retention`,
+  not just the run's new ones, via `news.Service.Import`: an upsert by `id` (the Mongo `_id`), then a delete of
+  articles fetched before the cutoff. That makes it idempotent and lets a run that couldn't reach Mongo be caught up
+  by the next. A sync failure fails the run. The `news` package owns the Mongo schema (snake_case bson, camelCase
+  JSON); `cmd/collector` converts `collector.Article` to `news.Article`, so `internal/collector` never imports Mongo.
+- `GET /api/v1/news?tag=&limit=&cursor=` is public, newest first, and pages with an opaque `nextCursor` over
+  (`published_at`, `_id`) so ties on publish time don't skip or repeat articles.
 - `collector.Article` uses the same JSON field names as the frontend news items (`arium/src/data/mockNews.js`),
   and tags are the slugs `devops|sre|gitops|devsecops`.
 - Hacker News is low-volume by design (expect 0–5 stories a week); the RSS feeds supply most articles.
@@ -135,3 +142,33 @@ writes it to a directory, meant to be a Docker volume. Nothing reads its output 
 `.github/workflows/deploy-local.yaml` runs on push to `main` (self-hosted runner): `test` job spins up Mongo,
 runs `gofmt`, `go vet`, `go build`, unit tests, and integration tests against it; `deploy` job (gated on `test`
 passing) rebuilds and redeploys the Docker Compose stack in place. There is no separate frontend CI job yet.
+
+The workflow runs only on pushes to `main`, so PRs get no CI. `main` requires a code-owner review; the owner merges
+with `gh pr merge --admin` (use `gh api -X PATCH repos/fmolinar/arium/pulls/<n> -f base=main` to retarget a PR,
+since `gh pr edit` fails on a classic-Projects GraphQL error). Both self-hosted runners (`desktop-runner`,
+`laptop-runner`) are often offline: runs then sit queued, and a newer push cancels the queued one.
+
+## Next steps
+
+Decisions already made (don't re-litigate): MongoDB stays the store for news (already deployed, document-shaped
+data, a few thousand docs at most; no Postgres/Elasticsearch). Observability uses OpenTelemetry with the Grafana
+stack, not ELK (Elasticsearch is too heavy for the Docker Desktop host, and ELK is log-centric).
+
+1. **Frontend on real news.** Replace `MOCK_NEWS` in `arium/src/pages/NewsHub.jsx` and
+   `arium/src/components/NewsTicker.jsx` with `GET /api/v1/news` (`tag` filter, `nextCursor` paging). Keep
+   `TOPICS` in `mockNews.js` or move it next to the API client.
+2. **Structured logging.** Switch the API and collector to `log/slog` with JSON output, carrying the chi request
+   ID and, once tracing lands, trace/span IDs. Replace the plain-text `middleware.Logging`.
+3. **Metrics + Grafana.** Instrument with OpenTelemetry (Prometheus exporter or OTLP → Prometheus). API: RED
+   metrics per route (rate, errors, duration). Collector: articles per run, per-source failures, run duration, and
+   a last-successful-run timestamp (which should eventually replace the heartbeat-file healthcheck). Add Grafana with
+   provisioned datasources and dashboards committed to the repo. `grafana/otel-lgtm` is fine to start with; split
+   into separate Prometheus/Loki/Tempo/Grafana services later to show the production shape.
+4. **Logs in Loki**, shipped from container stdout.
+5. **Traces in Tempo**: OTel HTTP middleware on chi plus the MongoDB driver instrumentation, so a request is
+   traceable browser → API → Mongo.
+6. **SLOs and alerting**: availability/latency SLOs for the API, burn-rate alerts, and a collector staleness alert
+   (no successful run in ~10h) via Grafana alerting or Alertmanager.
+
+Also open: frontend lint/build in CI, a post-deploy `/health` check in the deploy job, and the planned
+`devops/jenkins/` and `devops/kubernetes/` work (the collector's schedule maps onto a `CronJob`).

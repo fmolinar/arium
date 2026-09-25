@@ -3,7 +3,8 @@
 // volume in deployment). See internal/collector for the on-disk layout.
 //
 // By default it runs once and exits. With -schedule it stays up and runs at
-// the given times every day.
+// the given times every day. With -mongo-uri each run also syncs the stored
+// articles into MongoDB for the API to serve.
 package main
 
 import (
@@ -21,9 +22,13 @@ import (
 	"time"
 	_ "time/tzdata" // -timezone works in minimal images without zoneinfo
 
+	"go.mongodb.org/mongo-driver/v2/mongo"
+	mongooptions "go.mongodb.org/mongo-driver/v2/mongo/options"
+
 	"github.com/fmolinar/arium/backend/internal/collector"
 	"github.com/fmolinar/arium/backend/internal/collector/hackernews"
 	"github.com/fmolinar/arium/backend/internal/collector/rss"
+	"github.com/fmolinar/arium/backend/internal/news"
 )
 
 type options struct {
@@ -31,6 +36,7 @@ type options struct {
 	dryRun     bool
 	retention  time.Duration
 	healthFile string
+	news       *news.Service // nil when MongoDB sync is off
 }
 
 func main() {
@@ -44,6 +50,9 @@ func main() {
 		timezone  = flag.String("timezone", getEnv("COLLECTOR_TIMEZONE", "UTC"), "time zone for -schedule, e.g. America/Los_Angeles (env COLLECTOR_TIMEZONE)")
 		once      = flag.Bool("once", false, "run once and exit, even if a schedule is configured")
 		dryRun    = flag.Bool("dry-run", false, "print articles as NDJSON to stdout instead of writing to -out")
+
+		mongoURI = flag.String("mongo-uri", os.Getenv("MONGO_URI"), "sync stored articles into this MongoDB after each run; empty disables (env MONGO_URI)")
+		mongoDB  = flag.String("mongo-db", getEnv("MONGO_DB", "arium"), "MongoDB database for -mongo-uri (env MONGO_DB)")
 
 		healthFile  = flag.String("health-file", getEnv("COLLECTOR_HEALTH_FILE", filepath.Join(os.TempDir(), "collector-heartbeat.json")), "heartbeat file written in schedule mode (env COLLECTOR_HEALTH_FILE)")
 		healthcheck = flag.Bool("healthcheck", false, "exit non-zero if the scheduler's next run is overdue (for a container healthcheck)")
@@ -94,6 +103,18 @@ func main() {
 	}
 
 	opts := options{outDir: *outDir, dryRun: *dryRun, retention: *retention, healthFile: *healthFile}
+
+	if *mongoURI != "" && !*dryRun {
+		// Connect doesn't contact the server, so an unreachable MongoDB fails
+		// individual syncs instead of stopping the collector.
+		client, err := mongo.Connect(mongooptions.Client().ApplyURI(*mongoURI).SetServerSelectionTimeout(10 * time.Second))
+		if err != nil {
+			log.Fatalf("-mongo-uri: %v", err)
+		}
+		defer client.Disconnect(context.Background())
+
+		opts.news = news.NewService(news.NewRepository(client.Database(*mongoDB)))
+	}
 
 	if *schedule == "" || *once {
 		// Exit non-zero only when nothing could be fetched, so a scheduler
@@ -199,6 +220,14 @@ func runOnce(ctx context.Context, c *collector.Collector, opts options) error {
 		summary += fmt.Sprintf(", pruned %d files and %d state entries", m.Pruned.Files, m.Pruned.StateEntries)
 	}
 	log.Print(summary)
+
+	if opts.news != nil {
+		res, err := syncNews(ctx, opts.news, store, time.Now(), opts.retention)
+		if err != nil {
+			return fmt.Errorf("sync to MongoDB: %w", err)
+		}
+		log.Printf("mongo: %d inserted, %d updated, %d expired", res.Upserted, res.Updated, res.Deleted)
+	}
 
 	if errors.Is(collectErr, collector.ErrAllSourcesFailed) {
 		return collectErr

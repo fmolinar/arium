@@ -5,23 +5,22 @@ This directory holds the Go code for Arium. It builds two independent programs f
 
 | Program | Entry point | What it does |
 |---|---|---|
-| **API** | `cmd/api` | HTTP JSON API: health check, user registration/login (JWT) and profile. Stores users in MongoDB. |
-| **News collector** | `cmd/collector` | Pulls DevOps/SRE/GitOps/DevSecOps news from RSS/Atom feeds and Hacker News three times a day, and keeps 30 days of deduplicated articles on a volume. |
+| **API** | `cmd/api` | HTTP JSON API: health check, user registration/login (JWT) and profile, and the news feed. Stores users and news in MongoDB. |
+| **News collector** | `cmd/collector` | Pulls DevOps/SRE/GitOps/DevSecOps news from RSS/Atom feeds and Hacker News three times a day, keeps 30 days of deduplicated articles on a volume, and syncs them into MongoDB. |
 
-The two don't talk to each other yet. The next step is loading the collector's output into MongoDB and serving
-it from a `GET /api/v1/news` endpoint (dashed lines below).
+The two never call each other: the collector writes articles to its volume and syncs them into MongoDB, and the
+API reads them from there.
 
 ```mermaid
 flowchart LR
     browser["Browser<br/>React app"] -- "HTTPS / JSON<br/>Bearer JWT" --> api["API<br/>cmd/api"]
-    api -- "users collection" --> mongo[("MongoDB")]
+    api -- "users · news collections" --> mongo[("MongoDB")]
 
     feeds["RSS / Atom feeds<br/>9 blogs"] --> collector["News collector<br/>cmd/collector"]
     hn["Hacker News<br/>Algolia search API"] --> collector
     collector --> volume[("collector_data volume<br/>raw · articles · state · runs")]
 
-    volume -. "planned: loader" .-> mongo
-    mongo -. "planned: GET /api/v1/news" .-> api
+    collector -- "sync: upsert by id,<br/>delete expired" --> mongo
 ```
 
 ## Software stack
@@ -45,6 +44,8 @@ backend/
 │   └── collector/
 │       ├── main.go             # Collector CLI: flags, run-once or schedule mode
 │       ├── config.go           # Loads and validates sources.json
+│       ├── sync.go             # Syncs stored articles into MongoDB after each run
+│       ├── health.go           # Heartbeat file and -healthcheck
 │       └── sources.json        # Default feeds and Hacker News queries (embedded in the binary)
 ├── internal/
 │   ├── config/                 # API configuration from environment variables
@@ -52,6 +53,7 @@ backend/
 │   ├── middleware/             # JWT auth, CORS, request logging
 │   ├── server/                 # chi router, global middleware, /health, HTTP server
 │   ├── user/                   # User feature: model → repository → service → handler → routes
+│   ├── news/                   # News feed: same layering; also the Mongo import used by the collector
 │   └── collector/              # News pipeline: collect, normalize, tag, deduplicate, store, prune, schedule
 │       ├── rss/                # RSS/Atom source
 │       └── hackernews/         # Hacker News source
@@ -71,6 +73,7 @@ backend/
 | `POST` | `/api/v1/users/login` | – | Check credentials and return `{token, user}` |
 | `GET` | `/api/v1/users/me` | Bearer JWT | Current user's profile |
 | `PATCH` | `/api/v1/users/me` | Bearer JWT | Update the current user's `name` |
+| `GET` | `/api/v1/news` | – | News, newest first: `{items, nextCursor}`. Query: `tag` (`devops`/`sre`/`gitops`/`devsecops`), `limit` (1–100, default 20), `cursor` (a previous `nextCursor`) |
 
 Errors are always `{"error": "<message>"}` with a matching status code.
 
@@ -226,6 +229,9 @@ Each article uses the same JSON shape as the frontend's news items:
   non-zero only if *every* source fails.
 - **Health:** before each wait the scheduler writes the next run time to a heartbeat file. `-healthcheck` fails
   if that run is more than 10 minutes overdue, meaning the loop died or a run is hung.
+- **MongoDB sync:** after each run, every article on the volume fetched within the retention window is upserted
+  into the `news` collection by `id`, and older ones are deleted. Re-importing everything keeps the sync
+  idempotent and lets a run that couldn't reach MongoDB be caught up by the next one; a failed sync fails the run.
 - **Concurrency:** a lock file stops a manual `-once` run and the scheduled run from writing at the same time.
 - **Delivery is at-least-once:** a crash between writing articles and saving state can repeat some articles in
   the next run, so consumers should deduplicate by `id`.
@@ -243,6 +249,8 @@ Each article uses the same JSON shape as the frontend's news items:
 | `-timeout` | `COLLECTOR_SOURCE_TIMEOUT` | `15s` | Per-source timeout |
 | `-health-file` | `COLLECTOR_HEALTH_FILE` | `$TMPDIR/collector-heartbeat.json` | Heartbeat written in schedule mode |
 | `-healthcheck` | | | Exit non-zero if the next scheduled run is overdue |
+| `-mongo-uri` | `MONGO_URI` | empty = no sync | Sync stored articles into this MongoDB after each run |
+| `-mongo-db` | `MONGO_DB` | `arium` | Database for `-mongo-uri` |
 | `-once` | | | Run once even if a schedule is set |
 | `-dry-run` | | | Print articles as NDJSON, write nothing |
 

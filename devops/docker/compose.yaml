@@ -40,20 +40,28 @@ services:
       - JWT_SECRET=${JWT_SECRET:?JWT_SECRET must be set (see devops/docker/.env.example)}
 
   # News collector. Runs on a schedule (3 times a day by default), keeps 30 days
-  # of data in the collector_data volume and skips duplicate articles.
+  # of data in the collector_data volume, skips duplicate articles and syncs
+  # them into Mongo's news collection.
   # Collect once right now, alongside the scheduler:
   #   docker compose run --rm collector -once
   collector:
+    networks:
+      - arium_network
     build:
       context: ../..
       dockerfile: devops/docker/Dockerfile.collector
     image: arium-collector:latest
     container_name: arium-collector
     restart: unless-stopped
+    depends_on:
+      - mongo
     volumes:
       - collector_data:/data
     environment:
       - COLLECTOR_OUT_DIR=/data
+      # After each run, sync the stored articles into Mongo for GET /api/v1/news.
+      - MONGO_URI=mongodb://mongo:27017/arium
+      - MONGO_DB=arium
       - COLLECTOR_SCHEDULE=${COLLECTOR_SCHEDULE:-00:00,08:00,16:00}
       - COLLECTOR_TIMEZONE=${COLLECTOR_TIMEZONE:-UTC}
       - COLLECTOR_RETENTION=${COLLECTOR_RETENTION:-720h}
