@@ -12,11 +12,15 @@ import (
 
 	"github.com/fmolinar/arium/backend/internal/config"
 	"github.com/fmolinar/arium/backend/internal/database"
+	"github.com/fmolinar/arium/backend/internal/news"
 	"github.com/fmolinar/arium/backend/internal/server"
 	"github.com/fmolinar/arium/backend/internal/user"
 )
 
-var testServer *httptest.Server
+var (
+	testServer  *httptest.Server
+	newsService *news.Service // for seeding articles
+)
 
 // TestMain spins up the real HTTP server against a MongoDB instance reachable
 // at TEST_MONGO_URI (default: mongodb://localhost:27017), using a throwaway
@@ -51,7 +55,15 @@ func TestMain(m *testing.M) {
 	}
 
 	userHandler := user.NewHandler(user.NewService(userRepo, cfg))
-	app := server.New(cfg, client, userHandler)
+
+	newsRepo := news.NewRepository(client.Database(cfg.MongoDatabase))
+	if err := newsRepo.EnsureIndexes(ctx); err != nil {
+		fmt.Fprintf(os.Stderr, "ensure indexes: %v\n", err)
+		os.Exit(1)
+	}
+
+	newsService = news.NewService(newsRepo)
+	app := server.New(cfg, client, userHandler, news.NewHandler(newsService))
 	testServer = httptest.NewServer(app.Handler())
 
 	code := m.Run()

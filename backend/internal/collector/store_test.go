@@ -154,6 +154,31 @@ func TestWriteArticlesDedupes(t *testing.T) {
 	}
 }
 
+func TestReadArticles(t *testing.T) {
+	store, _ := newTestStore(t)
+
+	got, err := store.ReadArticles()
+	if err != nil || len(got) != 0 {
+		t.Fatalf("empty store: ReadArticles = %v, %v; want none", got, err)
+	}
+
+	a, b, c := article("https://a.test/1"), article("https://b.test/2"), article("https://c.test/3")
+	if _, err := store.WriteArticles(testRun("run1"), []Article{a, b}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.WriteArticles(testRun("run2"), []Article{c}); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err = store.ReadArticles()
+	if err != nil {
+		t.Fatalf("ReadArticles: %v", err)
+	}
+	if len(got) != 3 || got[0].ID != a.ID || got[1].ID != b.ID || got[2].ID != c.ID {
+		t.Errorf("ReadArticles = %+v, want a, b, c in write order", got)
+	}
+}
+
 func TestWriteArticlesNothingNew(t *testing.T) {
 	store, root := newTestStore(t)
 	a := article("https://a.test/1")

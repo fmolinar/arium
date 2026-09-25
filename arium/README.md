@@ -1,8 +1,8 @@
 # Frontend (`arium/`)
 
 The React single-page app for Arium: a news hub for DevOps, SRE, GitOps and DevSecOps, with a forum to come.
-It currently runs on mock data. The [news collector](../backend#news-collector) already produces articles in the
-same shape, and a `GET /api/v1/news` endpoint will connect the two.
+It currently runs on mock data. The API's `GET /api/v1/news` already serves real articles from the
+[news collector](../backend#news-collector) in the same shape; switching the app over to it is the next step.
 
 ## Software stack
 

@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 )
@@ -236,6 +237,37 @@ func (s *Store) WriteArticles(run Run, articles []Article) (ArticlesWrite, error
 	}
 
 	return result, s.saveJSON(titlesPath, titles)
+}
+
+// ReadArticles returns every stored article, oldest file first. It reads
+// completed files only (writes are atomic), so it needs no lock. An article
+// can appear more than once after a crash; see WriteArticles.
+func (s *Store) ReadArticles() ([]Article, error) {
+	paths, err := filepath.Glob(filepath.Join(s.root, "articles", "*", "*.ndjson"))
+	if err != nil {
+		return nil, err
+	}
+	// Day directories and run IDs both sort chronologically.
+	sort.Strings(paths)
+
+	var articles []Article
+	for _, path := range paths {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return nil, fmt.Errorf("read %s: %w", path, err)
+		}
+
+		dec := json.NewDecoder(bytes.NewReader(data))
+		for dec.More() {
+			var a Article
+			if err := dec.Decode(&a); err != nil {
+				return nil, fmt.Errorf("decode %s: %w", path, err)
+			}
+			articles = append(articles, a)
+		}
+	}
+
+	return articles, nil
 }
 
 // WriteManifest stores the run summary.

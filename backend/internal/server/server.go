@@ -11,6 +11,7 @@ import (
 
 	"github.com/fmolinar/arium/backend/internal/config"
 	"github.com/fmolinar/arium/backend/internal/middleware"
+	"github.com/fmolinar/arium/backend/internal/news"
 	"github.com/fmolinar/arium/backend/internal/user"
 	"github.com/fmolinar/arium/backend/pkg/response"
 )
@@ -20,14 +21,14 @@ type Server struct {
 	db         *mongo.Client
 }
 
-func New(cfg config.Config, db *mongo.Client, userHandler *user.Handler) *Server {
+func New(cfg config.Config, db *mongo.Client, userHandler *user.Handler, newsHandler *news.Handler) *Server {
 	server := &Server{
 		db: db,
 	}
 
 	server.httpServer = &http.Server{
 		Addr:              cfg.Address,
-		Handler:           server.routes(cfg, userHandler),
+		Handler:           server.routes(cfg, userHandler, newsHandler),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
 		WriteTimeout:      15 * time.Second,
@@ -37,7 +38,7 @@ func New(cfg config.Config, db *mongo.Client, userHandler *user.Handler) *Server
 	return server
 }
 
-func (s *Server) routes(cfg config.Config, userHandler *user.Handler) http.Handler {
+func (s *Server) routes(cfg config.Config, userHandler *user.Handler, newsHandler *news.Handler) http.Handler {
 	router := chi.NewRouter()
 
 	router.Use(middleware.Logging)
@@ -50,6 +51,7 @@ func (s *Server) routes(cfg config.Config, userHandler *user.Handler) http.Handl
 
 	router.Route("/api/v1", func(router chi.Router) {
 		router.Mount("/users", user.Routes(userHandler, cfg))
+		router.Mount("/news", news.Routes(newsHandler))
 	})
 
 	return router

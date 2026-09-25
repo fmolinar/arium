@@ -72,7 +72,7 @@ Runs `app` (React, host port 3000 → container 4173), `backend` (Go API, port 8
 the chi router, mounts global middleware (logging, recoverer, timeout, CORS), and mounts feature routers under
 `/api/v1/...`.
 
-Each feature (currently just `user`) follows a fixed layering, all under `internal/<feature>/`:
+Each feature (`user`, `news`) follows a fixed layering, all under `internal/<feature>/`:
 
 - `model.go` — domain type plus request/response DTOs
 - `repository.go` — MongoDB access
@@ -99,8 +99,8 @@ call chain rather than accessed as a global.
 ### News collector
 
 `cmd/collector` is a standalone CLI (separate from the API) that ingests DevOps/SRE/GitOps/DevSecOps news and
-writes it to a directory, meant to be a Docker volume. Nothing reads its output yet; loading into Mongo and a
-`GET /api/v1/news` endpoint come later.
+writes it to a directory, meant to be a Docker volume. With `-mongo-uri` (env `MONGO_URI`, set in Compose) each run
+then syncs the stored articles into Mongo's `news` collection, which the API serves from `GET /api/v1/news`.
 
 - Sources live in `internal/collector/<source>/`: `rss` (RSS/Atom feeds via gofeed) and `hackernews` (Algolia
   HN Search, title keyword queries, ≥20 points, only stories newer than `-since`). The default source list is
@@ -124,6 +124,13 @@ writes it to a directory, meant to be a Docker volume. Nothing reads its output 
 - A failed source is recorded in the manifest and the run continues. The CLI exits non-zero only when every
   source fails (`ErrAllSourcesFailed`), so a scheduler alerts on outages but not on one flaky feed.
 - Delivery is at-least-once across crashes, so consumers should deduplicate by `id`.
+- The Mongo sync (`cmd/collector/sync.go`) re-imports every article on the volume fetched within `-retention`,
+  not just the run's new ones, via `news.Service.Import`: an upsert by `id` (the Mongo `_id`), then a delete of
+  articles fetched before the cutoff. That makes it idempotent and lets a run that couldn't reach Mongo be caught up
+  by the next. A sync failure fails the run. The `news` package owns the Mongo schema (snake_case bson, camelCase
+  JSON); `cmd/collector` converts `collector.Article` to `news.Article`, so `internal/collector` never imports Mongo.
+- `GET /api/v1/news?tag=&limit=&cursor=` is public, newest first, and pages with an opaque `nextCursor` over
+  (`published_at`, `_id`) so ties on publish time don't skip or repeat articles.
 - `collector.Article` uses the same JSON field names as the frontend news items (`arium/src/data/mockNews.js`),
   and tags are the slugs `devops|sre|gitops|devsecops`.
 - Hacker News is low-volume by design (expect 0–5 stories a week); the RSS feeds supply most articles.
