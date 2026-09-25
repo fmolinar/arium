@@ -1,44 +1,29 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import NewsCard from '../components/NewsCard'
 import { useBookmarks } from '../hooks/useBookmarks'
-import { MOCK_NEWS, TOPICS } from '../data/mockNews'
+import { useNews } from '../hooks/useNews'
+import { TOPICS } from '../api/news'
 
 const PAGE_SIZE = 6
 
-const allSorted = [...MOCK_NEWS].sort(
-  (a, b) => new Date(b.publishedAt) - new Date(a.publishedAt),
-)
-
 export default function NewsHub() {
   const [activeTag, setActiveTag] = useState(null)
-  const [visibleCount, setVisibleCount] = useState(PAGE_SIZE)
-  const [prevTag, setPrevTag] = useState(activeTag)
   const sentinelRef = useRef(null)
   const { isBookmarked, toggle } = useBookmarks()
+  const { items, loading, error, hasMore, loadMore, retry } = useNews(activeTag, PAGE_SIZE)
 
-  const filtered = useMemo(
-    () => (activeTag ? allSorted.filter((item) => item.tags.includes(activeTag)) : allSorted),
-    [activeTag],
-  )
+  const canLoadMore = hasMore && !loading && !error
 
-  // Reset pagination when the topic filter changes (adjusting state during
-  // render, per https://react.dev/learn/you-might-not-need-an-effect).
-  if (activeTag !== prevTag) {
-    setPrevTag(activeTag)
-    setVisibleCount(PAGE_SIZE)
-  }
-
-  const visible = filtered.slice(0, visibleCount)
-  const hasMore = visibleCount < filtered.length
-
+  // Re-created after each page loads, so a sentinel that is still on screen
+  // (a short page) triggers the next fetch straight away.
   useEffect(() => {
     const node = sentinelRef.current
-    if (!node || !hasMore) return
+    if (!node || !canLoadMore) return
 
     const observer = new IntersectionObserver(
       (entries) => {
         if (entries[0].isIntersecting) {
-          setVisibleCount((count) => count + PAGE_SIZE)
+          loadMore()
         }
       },
       { rootMargin: '200px' },
@@ -46,7 +31,7 @@ export default function NewsHub() {
 
     observer.observe(node)
     return () => observer.disconnect()
-  }, [hasMore])
+  }, [canLoadMore, loadMore, items.length])
 
   return (
     <section className="mx-auto max-w-4xl px-6 py-14">
@@ -82,7 +67,7 @@ export default function NewsHub() {
       </div>
 
       <div className="mt-8 flex flex-col gap-4">
-        {visible.map((item) => (
+        {items.map((item) => (
           <NewsCard
             key={item.id}
             item={item}
@@ -91,16 +76,25 @@ export default function NewsHub() {
           />
         ))}
 
-        {visible.length === 0 && (
+        {!loading && !error && items.length === 0 && (
           <p className="py-12 text-center font-mono text-sm text-text">
             No stories for this topic yet.
           </p>
         )}
       </div>
 
-      {hasMore && (
+      {error && (
+        <div className="py-8 text-center font-mono text-xs text-text">
+          couldn&apos;t load stories.{' '}
+          <button type="button" onClick={retry} className="text-accent hover:underline">
+            retry
+          </button>
+        </div>
+      )}
+
+      {!error && (loading || hasMore) && (
         <div ref={sentinelRef} className="py-8 text-center font-mono text-xs text-text">
-          loading more…
+          {items.length ? 'loading more…' : 'loading…'}
         </div>
       )}
     </section>
