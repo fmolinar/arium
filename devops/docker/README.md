@@ -8,7 +8,7 @@ the stack from here (see [`devops/`](..)), and you can run the same stack locall
 ```mermaid
 flowchart LR
     user["Browser"] -- ":3000" --> app["app<br/>arium-react<br/>vite preview :4173"]
-    user -- ":8080 /api/v1" --> backend["backend<br/>arium-backend<br/>Go API :8080"]
+    app -- "proxy /api" --> backend["backend<br/>arium-backend<br/>Go API :8080"]
     backend -- "mongodb://mongo:27017" --> mongo[("mongo<br/>arium-mongo")]
     mongo --- mongoVol[("volume: mongo_data")]
 
@@ -31,8 +31,9 @@ flowchart LR
 | `mongo` | `mongo:latest` | 27017 → 27017 | `mongo_data` → `/data/db` | unless-stopped |
 | `collector` | `arium-collector` ([`Dockerfile.collector`](Dockerfile.collector)) | none | `collector_data` → `/data` | unless-stopped |
 
-The browser calls the API directly on port 8080, so the browser, not the `app` container, is what talks to
-`backend`. The API's CORS policy allows `FRONTEND_URL` (`http://localhost:3000`). The collector fetches
+The browser calls the API at relative `/api` URLs on port 3000, and `vite preview` in the `app` container
+proxies them to `backend` (`API_PROXY_TARGET=http://backend:8080`), so those requests are same-origin. The API's
+port 8080 is still published for direct calls, and its CORS policy allows `FRONTEND_URL` (`http://localhost:3000`). The collector fetches
 sources over HTTPS and, after each run, syncs articles into Mongo's `news` collection over `arium_network`. Its healthcheck runs `collector -healthcheck` every minute
 and marks the container unhealthy once a scheduled run is more than 10 minutes overdue.
 
@@ -56,6 +57,7 @@ Compose reads `devops/docker/.env`, which is gitignored. Copy [`.env.example`](.
 | `JWT_SECRET` | backend | **required**: compose won't start without it | `openssl rand -base64 32` |
 | `COLLECTOR_SCHEDULE` | collector | `00:00,08:00,16:00` | Daily run times |
 | `COLLECTOR_TIMEZONE` | collector | `UTC` | e.g. `America/Los_Angeles` |
+| `COLLECTOR_RUN_ON_START` | collector | `true` | Also collect once when the container starts |
 | `COLLECTOR_RETENTION` | collector | `720h` | Keep 30 days of data |
 | `COLLECTOR_SINCE` | collector | `168h` | Ignore articles older than 7 days (must be ≤ retention) |
 | `COLLECTOR_SOURCE_TIMEOUT` | collector | `15s` | Per-source timeout |

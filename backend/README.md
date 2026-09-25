@@ -219,7 +219,9 @@ Each article uses the same JSON shape as the frontend's news items:
 ### Run policy
 
 - **Schedule:** 3 times a day, every day (`COLLECTOR_SCHEDULE`, `COLLECTOR_TIMEZONE`). Runs missed while the
-  collector is down are not made up, and a failed run doesn't stop the schedule.
+  collector is down are not made up, and a failed run doesn't stop the schedule. With `-run-on-start`
+  (`COLLECTOR_RUN_ON_START`, on in Docker Compose) it also runs once at startup, so a fresh deploy has news
+  without waiting for the next scheduled time.
 - **Duplicates are never saved.** An article is skipped if its canonical URL or its normalized title was already
   stored; titles under 4 words are compared by URL only. Raw payloads identical to the last one stored are
   skipped.
@@ -244,6 +246,7 @@ Each article uses the same JSON shape as the frontend's news items:
 | `-sources` | `COLLECTOR_SOURCES` | built-in `sources.json` | Custom feeds / Hacker News queries |
 | `-schedule` | `COLLECTOR_SCHEDULE` | empty = run once | Daily run times, `HH:MM,HH:MM,...` |
 | `-timezone` | `COLLECTOR_TIMEZONE` | `UTC` | Time zone for `-schedule` |
+| `-run-on-start` | `COLLECTOR_RUN_ON_START` | `false` | With `-schedule`, also run once at startup |
 | `-retention` | `COLLECTOR_RETENTION` | `720h` | Delete stored data older than this; `0` keeps everything |
 | `-since` | `COLLECTOR_SINCE` | `168h` | Ignore articles older than this |
 | `-timeout` | `COLLECTOR_SOURCE_TIMEOUT` | `15s` | Per-source timeout |

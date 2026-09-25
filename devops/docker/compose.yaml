@@ -18,6 +18,11 @@ services:
     # Set port mapping for the application, mapping port 3000 on the host to port 4173 in the container
     ports:
       - "3000:4173"
+    # vite preview proxies /api to the backend (see arium/vite.config.js).
+    environment:
+      - API_PROXY_TARGET=http://backend:8080
+    depends_on:
+      - backend
 
   backend:
     networks:
@@ -64,6 +69,9 @@ services:
       - MONGO_DB=arium
       - COLLECTOR_SCHEDULE=${COLLECTOR_SCHEDULE:-00:00,08:00,16:00}
       - COLLECTOR_TIMEZONE=${COLLECTOR_TIMEZONE:-UTC}
+      # Collect once when the container starts, so a fresh stack isn't empty
+      # until the next scheduled time.
+      - COLLECTOR_RUN_ON_START=${COLLECTOR_RUN_ON_START:-true}
       - COLLECTOR_RETENTION=${COLLECTOR_RETENTION:-720h}
       - COLLECTOR_SINCE=${COLLECTOR_SINCE:-168h}
       - COLLECTOR_SOURCE_TIMEOUT=${COLLECTOR_SOURCE_TIMEOUT:-15s}

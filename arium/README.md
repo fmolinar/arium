@@ -1,8 +1,17 @@
 # Frontend (`arium/`)
 
 The React single-page app for Arium: a news hub for DevOps, SRE, GitOps and DevSecOps, with a forum to come.
-It currently runs on mock data. The API's `GET /api/v1/news` already serves real articles from the
-[news collector](../backend#news-collector) in the same shape; switching the app over to it is the next step.
+News comes from the API's `GET /api/v1/news`, which serves the articles gathered by the
+[news collector](../backend#news-collector).
+
+## Running against the API
+
+The app calls the API at relative `/api/...` URLs, and both `npm run dev` and `npm run preview` proxy `/api` to
+`API_PROXY_TARGET` (default `http://localhost:8080`). Nothing about the API's location is baked into the build,
+and the browser never makes a cross-origin request. Start the backend (`cd ../backend && go run ./cmd/api`)
+before `npm run dev`. In Docker Compose the `app` service sets `API_PROXY_TARGET=http://backend:8080`.
+If Mongo has no articles yet, the News Hub shows "No stories for this topic yet"; see the
+[collector](../backend#news-collector) for a one-off run.
 
 ## Software stack
 
@@ -21,7 +30,7 @@ It currently runs on mock data. The API's `GET /api/v1/news` already serves real
 ```text
 arium/
 ├── index.html                  # Vite entry HTML
-├── vite.config.js              # React + Tailwind plugins
+├── vite.config.js              # React + Tailwind plugins, /api proxy for dev and preview
 ├── eslint.config.js
 └── src/
     ├── main.jsx                # Mounts <App/> inside ThemeProvider and BrowserRouter
@@ -37,9 +46,11 @@ arium/
     │   ├── NewsHub.jsx         # Topic filter + infinitely scrolling news list
     │   ├── Forum.jsx           # Placeholder
     │   └── About.jsx
-    ├── hooks/useBookmarks.js   # Saved story IDs, persisted to localStorage
-    ├── theme/                  # ThemeContext provider, context object, useTheme hook
-    └── data/mockNews.js        # TOPICS and placeholder MOCK_NEWS
+    ├── api/news.js             # TOPICS and fetchNews (GET /api/v1/news)
+    ├── hooks/
+    │   ├── useNews.js          # Cursor paging over the news API for one topic
+    │   └── useBookmarks.js     # Saved story IDs, persisted to localStorage
+    └── theme/                  # ThemeContext provider, context object, useTheme hook
 ```
 
 ## How it works
@@ -54,8 +65,8 @@ flowchart TB
     layout --> forum["/forum Forum<br/>placeholder"]
     layout --> about["/about About"]
 
-    data[("data/mockNews.js<br/>TOPICS · MOCK_NEWS")] --> home
-    data --> news
+    api[("GET /api/v1/news<br/>via api/news.js")] --> home
+    api -- "useNews" --> news
     news --> card["NewsCard ×N"]
     bookmarks["useBookmarks<br/>localStorage: arium-bookmarks"] --> news
     theme -. "localStorage: arium-theme<br/>data-theme on html" .-> css["index.css tokens"]
@@ -63,16 +74,19 @@ flowchart TB
 
 - **Routing:** every page renders inside `Layout` through a nested route, so the header and footer stay mounted
   while the `<Outlet/>` changes.
-- **News Hub:** sorts stories newest first, filters by topic tag (`devops`, `sre`, `gitops`, `devsecops`) and
-  shows 6 at a time. An `IntersectionObserver` on a sentinel element loads the next 6 when you scroll near the
-  bottom, and changing the filter resets the page.
+- **News Hub:** `useNews` fetches stories newest first, 6 per request, filtered by topic tag (`devops`, `sre`,
+  `gitops`, `devsecops`) on the server. An `IntersectionObserver` on a sentinel element requests the next page
+  with the API's `nextCursor` when you scroll near the bottom. Changing the filter starts over from the first page
+  and aborts any request still in flight. A failed request shows a retry button.
+- **Ticker:** fetches the 5 newest stories once on mount, and shows a static line while loading or if the API is
+  unreachable.
 - **Bookmarks:** `useBookmarks` keeps a `Set` of story IDs in `localStorage`. It still works for the current
   session if storage is blocked, for example in private browsing.
 - **Theme:** with no saved choice, the app follows `prefers-color-scheme`. Toggling saves an explicit
   `light`/`dark` choice and sets `data-theme` on `<html>`. The palettes are CSS variables in `index.css`, and
   Tailwind v4's `@theme` block exposes them as utilities (`bg-bg`, `text-accent`, …).
-- **Data shape:** each news item is `{id, title, summary, source, url, tags, publishedAt}`. The collector's
-  `Article` JSON uses the same field names, so replacing the mock with API data won't require component changes.
+- **Data shape:** each news item is `{id, title, summary, source, url, tags, publishedAt}`, plus `fetchedAt` and
+  `origin` (the collector source), which the UI doesn't use.
 
 ## Running
 
