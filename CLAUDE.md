@@ -67,8 +67,8 @@ Runs `app` (React, host port 3000 → container 4173), `backend` (Go API, port 8
 
 ### Backend request flow
 
-`cmd/api/main.go` wires everything by hand (no DI framework): loads config → connects Mongo → constructs a
-`user.Repository` → `user.Service` → `user.Handler` → passes the handler into `server.New`. `server.go` builds
+`cmd/api/main.go` wires everything by hand (no DI framework): loads config → connects Mongo → for each feature
+constructs `Repository` (and calls `EnsureIndexes`) → `Service` → `Handler` → passes the handlers into `server.New`. `server.go` builds
 the chi router, mounts global middleware (logging, recoverer, timeout, CORS), and mounts feature routers under
 `/api/v1/...`.
 
@@ -142,3 +142,33 @@ then syncs the stored articles into Mongo's `news` collection, which the API ser
 `.github/workflows/deploy-local.yaml` runs on push to `main` (self-hosted runner): `test` job spins up Mongo,
 runs `gofmt`, `go vet`, `go build`, unit tests, and integration tests against it; `deploy` job (gated on `test`
 passing) rebuilds and redeploys the Docker Compose stack in place. There is no separate frontend CI job yet.
+
+The workflow runs only on pushes to `main`, so PRs get no CI. `main` requires a code-owner review; the owner merges
+with `gh pr merge --admin` (use `gh api -X PATCH repos/fmolinar/arium/pulls/<n> -f base=main` to retarget a PR,
+since `gh pr edit` fails on a classic-Projects GraphQL error). Both self-hosted runners (`desktop-runner`,
+`laptop-runner`) are often offline: runs then sit queued, and a newer push cancels the queued one.
+
+## Next steps
+
+Decisions already made (don't re-litigate): MongoDB stays the store for news (already deployed, document-shaped
+data, a few thousand docs at most; no Postgres/Elasticsearch). Observability uses OpenTelemetry with the Grafana
+stack, not ELK (Elasticsearch is too heavy for the Docker Desktop host, and ELK is log-centric).
+
+1. **Frontend on real news.** Replace `MOCK_NEWS` in `arium/src/pages/NewsHub.jsx` and
+   `arium/src/components/NewsTicker.jsx` with `GET /api/v1/news` (`tag` filter, `nextCursor` paging). Keep
+   `TOPICS` in `mockNews.js` or move it next to the API client.
+2. **Structured logging.** Switch the API and collector to `log/slog` with JSON output, carrying the chi request
+   ID and, once tracing lands, trace/span IDs. Replace the plain-text `middleware.Logging`.
+3. **Metrics + Grafana.** Instrument with OpenTelemetry (Prometheus exporter or OTLP → Prometheus). API: RED
+   metrics per route (rate, errors, duration). Collector: articles per run, per-source failures, run duration, and
+   a last-successful-run timestamp (which should eventually replace the heartbeat-file healthcheck). Add Grafana with
+   provisioned datasources and dashboards committed to the repo. `grafana/otel-lgtm` is fine to start with; split
+   into separate Prometheus/Loki/Tempo/Grafana services later to show the production shape.
+4. **Logs in Loki**, shipped from container stdout.
+5. **Traces in Tempo**: OTel HTTP middleware on chi plus the MongoDB driver instrumentation, so a request is
+   traceable browser → API → Mongo.
+6. **SLOs and alerting**: availability/latency SLOs for the API, burn-rate alerts, and a collector staleness alert
+   (no successful run in ~10h) via Grafana alerting or Alertmanager.
+
+Also open: frontend lint/build in CI, a post-deploy `/health` check in the deploy job, and the planned
+`devops/jenkins/` and `devops/kubernetes/` work (the collector's schedule maps onto a `CronJob`).

@@ -38,7 +38,7 @@ flowchart LR
 
     subgraph deploy ["job: deploy (15 min limit)"]
         direction TB
-        verify["docker / compose versions"] --> images["docker compose build"] --> up["docker compose up -d<br/>--remove-orphans"] --> status["compose ps + app logs"] --> prune["docker image prune"]
+        verify["docker / compose versions"] --> images["docker compose build"] --> up["docker compose up -d<br/>--remove-orphans"] --> status["compose ps +<br/>app & collector logs"] --> prune["docker image prune"]
     end
 
     deploy --> stack[("running stack:<br/>app · backend · mongo · collector")]
