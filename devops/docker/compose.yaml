@@ -59,6 +59,14 @@ services:
       - COLLECTOR_RETENTION=${COLLECTOR_RETENTION:-720h}
       - COLLECTOR_SINCE=${COLLECTOR_SINCE:-168h}
       - COLLECTOR_SOURCE_TIMEOUT=${COLLECTOR_SOURCE_TIMEOUT:-15s}
+    # Unhealthy when a scheduled run is over 10 minutes late: the scheduler
+    # loop died or a run is hung.
+    healthcheck:
+      test: ["CMD", "./collector", "-healthcheck"]
+      interval: 1m
+      timeout: 10s
+      start_period: 30s
+      retries: 3
 
   mongo:
     networks:

@@ -82,7 +82,7 @@ jobs:
       - name: Display deployment status
         run: |
           docker compose ps
-          docker compose logs --tail=50 app
+          docker compose logs --tail=50 app collector
 
       - name: Remove unused images
         run: docker image prune -f

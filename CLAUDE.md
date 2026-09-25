@@ -31,7 +31,9 @@ go run ./cmd/collector -schedule 00:00,08:00,16:00       # stay up, run daily at
 ```
 
 In Docker the `collector` service starts with the stack and runs on `COLLECTOR_SCHEDULE` (default 3×/day UTC),
-writing to the `collector_data` volume. One-off run: `cd devops/docker && docker compose run --rm collector -once`.
+writing to the `collector_data` volume. Its healthcheck (`collector -healthcheck`) reads a heartbeat file the
+scheduler writes before each wait and fails once a run is more than 10 minutes overdue. One-off run:
+`cd devops/docker && docker compose run --rm collector -once`.
 
 Integration tests are gated behind the `integration` build tag so contributors without Docker aren't blocked
 by `go test ./...`. To run them, start Mongo first:

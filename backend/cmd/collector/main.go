@@ -16,6 +16,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 	_ "time/tzdata" // -timezone works in minimal images without zoneinfo
@@ -26,9 +27,10 @@ import (
 )
 
 type options struct {
-	outDir    string
-	dryRun    bool
-	retention time.Duration
+	outDir     string
+	dryRun     bool
+	retention  time.Duration
+	healthFile string
 }
 
 func main() {
@@ -42,11 +44,21 @@ func main() {
 		timezone  = flag.String("timezone", getEnv("COLLECTOR_TIMEZONE", "UTC"), "time zone for -schedule, e.g. America/Los_Angeles (env COLLECTOR_TIMEZONE)")
 		once      = flag.Bool("once", false, "run once and exit, even if a schedule is configured")
 		dryRun    = flag.Bool("dry-run", false, "print articles as NDJSON to stdout instead of writing to -out")
+
+		healthFile  = flag.String("health-file", getEnv("COLLECTOR_HEALTH_FILE", filepath.Join(os.TempDir(), "collector-heartbeat.json")), "heartbeat file written in schedule mode (env COLLECTOR_HEALTH_FILE)")
+		healthcheck = flag.Bool("healthcheck", false, "exit non-zero if the scheduler's next run is overdue (for a container healthcheck)")
 	)
 	flag.Parse()
 
 	log.SetFlags(0)
 	log.SetPrefix("collector: ")
+
+	if *healthcheck {
+		if err := checkHeartbeat(*healthFile, time.Now()); err != nil {
+			log.Fatalf("unhealthy: %v", err)
+		}
+		return
+	}
 
 	// Pruning drops dedup state older than -retention, so articles older than
 	// that must already be filtered out by -since or they'd be stored again.
@@ -81,7 +93,7 @@ func main() {
 		MaxAge:        *maxAge,
 	}
 
-	opts := options{outDir: *outDir, dryRun: *dryRun, retention: *retention}
+	opts := options{outDir: *outDir, dryRun: *dryRun, retention: *retention, healthFile: *healthFile}
 
 	if *schedule == "" || *once {
 		// Exit non-zero only when nothing could be fetched, so a scheduler
@@ -118,6 +130,10 @@ func runScheduled(ctx context.Context, c *collector.Collector, opts options, sch
 	for {
 		next := sched.Next(time.Now())
 		log.Printf("next run at %s", next.Format(time.RFC3339))
+
+		if err := writeHeartbeat(opts.healthFile, next); err != nil {
+			log.Printf("heartbeat: %v", err)
+		}
 
 		timer := time.NewTimer(time.Until(next))
 		select {
