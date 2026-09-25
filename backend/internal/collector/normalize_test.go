@@ -165,3 +165,32 @@ func TestNormalizeRejects(t *testing.T) {
 		t.Errorf("bad URL error = %v, want ErrInvalidURL", err)
 	}
 }
+
+func TestTitleKey(t *testing.T) {
+	tests := []struct {
+		a, b string
+		same bool
+	}{
+		{"Kubernetes 1.35: In-Place Resize GA", "kubernetes 1.35 — in-place resize ga!", true},
+		{"Show HN: A faster GitOps controller", "A faster GitOps controller", true},
+		{"Ask HN: How do you run Argo CD?", "How do you run Argo CD", true},
+		{"Kubernetes 1.35 in-place resize GA", "Kubernetes 1.36 in-place resize GA", false},
+	}
+
+	for _, tt := range tests {
+		ka, kb := TitleKey(tt.a), TitleKey(tt.b)
+		if ka == "" || kb == "" {
+			t.Errorf("TitleKey(%q)=%q, TitleKey(%q)=%q; want non-empty", tt.a, ka, tt.b, kb)
+			continue
+		}
+		if (ka == kb) != tt.same {
+			t.Errorf("TitleKey(%q)=%q vs TitleKey(%q)=%q; same=%v, want %v", tt.a, ka, tt.b, kb, ka == kb, tt.same)
+		}
+	}
+
+	for _, short := range []string{"v3.2.0", "Release notes", "Community meeting notes", "Show HN: my tool", ""} {
+		if key := TitleKey(short); key != "" {
+			t.Errorf("TitleKey(%q) = %q, want \"\" for a title too short to compare", short, key)
+		}
+	}
+}

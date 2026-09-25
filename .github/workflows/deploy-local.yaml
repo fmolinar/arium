@@ -74,9 +74,7 @@ jobs:
           docker compose version
 
       - name: Build images
-        # --profile collector also rebuilds the on-demand collector image; `up`
-        # below doesn't enable the profile, so the collector isn't started.
-        run: docker compose --profile collector build
+        run: docker compose build
 
       - name: Deploy container
         run: docker compose up -d --remove-orphans
@@ -84,7 +82,7 @@ jobs:
       - name: Display deployment status
         run: |
           docker compose ps
-          docker compose logs --tail=50 app
+          docker compose logs --tail=50 app collector
 
       - name: Remove unused images
         run: docker image prune -f

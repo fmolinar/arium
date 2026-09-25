@@ -1,6 +1,9 @@
 // Command collector fetches news from the configured sources and writes raw
 // payloads, normalized articles and a run manifest to a directory (a Docker
 // volume in deployment). See internal/collector for the on-disk layout.
+//
+// By default it runs once and exits. With -schedule it stays up and runs at
+// the given times every day.
 package main
 
 import (
@@ -8,30 +11,60 @@ import (
 	"encoding/json"
 	"errors"
 	"flag"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
+	_ "time/tzdata" // -timezone works in minimal images without zoneinfo
 
 	"github.com/fmolinar/arium/backend/internal/collector"
 	"github.com/fmolinar/arium/backend/internal/collector/hackernews"
 	"github.com/fmolinar/arium/backend/internal/collector/rss"
 )
 
+type options struct {
+	outDir     string
+	dryRun     bool
+	retention  time.Duration
+	healthFile string
+}
+
 func main() {
 	var (
-		outDir  = flag.String("out", getEnv("COLLECTOR_OUT_DIR", "./data"), "output directory (env COLLECTOR_OUT_DIR)")
-		sources = flag.String("sources", os.Getenv("COLLECTOR_SOURCES"), "sources config JSON; built-in list if empty (env COLLECTOR_SOURCES)")
-		maxAge  = flag.Duration("since", getEnvDuration("COLLECTOR_SINCE", 7*24*time.Hour), "skip articles older than this; 0 keeps all (env COLLECTOR_SINCE)")
-		timeout = flag.Duration("timeout", getEnvDuration("COLLECTOR_SOURCE_TIMEOUT", 15*time.Second), "per-source timeout (env COLLECTOR_SOURCE_TIMEOUT)")
-		dryRun  = flag.Bool("dry-run", false, "print articles as NDJSON to stdout instead of writing to -out")
+		outDir    = flag.String("out", getEnv("COLLECTOR_OUT_DIR", "./data"), "output directory (env COLLECTOR_OUT_DIR)")
+		sources   = flag.String("sources", os.Getenv("COLLECTOR_SOURCES"), "sources config JSON; built-in list if empty (env COLLECTOR_SOURCES)")
+		maxAge    = flag.Duration("since", getEnvDuration("COLLECTOR_SINCE", 7*24*time.Hour), "skip articles older than this (env COLLECTOR_SINCE)")
+		timeout   = flag.Duration("timeout", getEnvDuration("COLLECTOR_SOURCE_TIMEOUT", 15*time.Second), "per-source timeout (env COLLECTOR_SOURCE_TIMEOUT)")
+		retention = flag.Duration("retention", getEnvDuration("COLLECTOR_RETENTION", 30*24*time.Hour), "delete stored data older than this; 0 keeps everything (env COLLECTOR_RETENTION)")
+		schedule  = flag.String("schedule", os.Getenv("COLLECTOR_SCHEDULE"), `daily run times, e.g. "00:00,08:00,16:00"; empty runs once (env COLLECTOR_SCHEDULE)`)
+		timezone  = flag.String("timezone", getEnv("COLLECTOR_TIMEZONE", "UTC"), "time zone for -schedule, e.g. America/Los_Angeles (env COLLECTOR_TIMEZONE)")
+		once      = flag.Bool("once", false, "run once and exit, even if a schedule is configured")
+		dryRun    = flag.Bool("dry-run", false, "print articles as NDJSON to stdout instead of writing to -out")
+
+		healthFile  = flag.String("health-file", getEnv("COLLECTOR_HEALTH_FILE", filepath.Join(os.TempDir(), "collector-heartbeat.json")), "heartbeat file written in schedule mode (env COLLECTOR_HEALTH_FILE)")
+		healthcheck = flag.Bool("healthcheck", false, "exit non-zero if the scheduler's next run is overdue (for a container healthcheck)")
 	)
 	flag.Parse()
 
 	log.SetFlags(0)
 	log.SetPrefix("collector: ")
+
+	if *healthcheck {
+		if err := checkHeartbeat(*healthFile, time.Now()); err != nil {
+			log.Fatalf("unhealthy: %v", err)
+		}
+		return
+	}
+
+	// Pruning drops dedup state older than -retention, so articles older than
+	// that must already be filtered out by -since or they'd be stored again.
+	if *retention > 0 && (*maxAge <= 0 || *maxAge > *retention) {
+		log.Fatalf("-since (%s) must be set and no longer than -retention (%s), or old articles would be re-stored after pruning", *maxAge, *retention)
+	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -60,6 +93,66 @@ func main() {
 		MaxAge:        *maxAge,
 	}
 
+	opts := options{outDir: *outDir, dryRun: *dryRun, retention: *retention, healthFile: *healthFile}
+
+	if *schedule == "" || *once {
+		// Exit non-zero only when nothing could be fetched, so a scheduler
+		// alerts on a full outage but not on one flaky feed.
+		if err := runOnce(ctx, c, opts); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
+
+	if *dryRun {
+		log.Fatal("-dry-run can't be combined with -schedule; add -once")
+	}
+
+	loc, err := time.LoadLocation(*timezone)
+	if err != nil {
+		log.Fatalf("-timezone: %v", err)
+	}
+
+	sched, err := collector.ParseSchedule(*schedule, loc)
+	if err != nil {
+		log.Fatalf("-schedule: %v", err)
+	}
+
+	runScheduled(ctx, c, opts, sched)
+}
+
+// runScheduled runs the collector at every scheduled time until ctx is
+// cancelled. A failed run is logged and the schedule carries on. Runs missed
+// while the process was down are not caught up.
+func runScheduled(ctx context.Context, c *collector.Collector, opts options, sched collector.Schedule) {
+	log.Printf("scheduled: daily at %s, retention %s", sched, opts.retention)
+
+	for {
+		next := sched.Next(time.Now())
+		log.Printf("next run at %s", next.Format(time.RFC3339))
+
+		if err := writeHeartbeat(opts.healthFile, next); err != nil {
+			log.Printf("heartbeat: %v", err)
+		}
+
+		timer := time.NewTimer(time.Until(next))
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			log.Print("shutting down")
+			return
+		case <-timer.C:
+		}
+
+		if err := runOnce(ctx, c, opts); err != nil {
+			log.Printf("run failed: %v", err)
+		}
+	}
+}
+
+// runOnce collects from every source and stores (or, in dry-run mode,
+// prints) the result.
+func runOnce(ctx context.Context, c *collector.Collector, opts options) error {
 	result, collectErr := c.Collect(ctx)
 
 	for _, sr := range result.Sources {
@@ -70,33 +163,48 @@ func main() {
 		log.Printf("%-22s fetched=%d rejected=%d stale=%d", sr.Name, sr.Fetched, sr.Rejected, sr.Stale)
 	}
 
-	if *dryRun {
+	if opts.dryRun {
 		enc := json.NewEncoder(os.Stdout)
 		for _, a := range result.Articles {
 			if err := enc.Encode(a); err != nil {
-				log.Fatal(err)
+				return err
 			}
 		}
 		log.Printf("dry run: %d articles, nothing written", len(result.Articles))
-	} else {
-		store, err := collector.NewStore(*outDir)
-		if err != nil {
-			log.Fatal(err)
-		}
 
-		manifest, err := collector.Persist(store, result, time.Now())
-		if err != nil {
-			log.Fatal(err)
-		}
-
-		log.Printf("run %s: %d new of %d articles → %s", manifest.RunID, manifest.ArticlesWritten, len(result.Articles), *outDir)
+		return collectErr
 	}
 
-	// Exit non-zero only when nothing could be fetched, so a scheduler alerts
-	// on a full outage but not on one flaky feed.
+	store, err := collector.NewStore(opts.outDir)
+	if err != nil {
+		return err
+	}
+
+	m, err := collector.Persist(store, result, time.Now(), opts.retention)
+	if err != nil {
+		return err
+	}
+
+	unchanged := 0
+	for _, sr := range m.Sources {
+		if sr.RawUnchanged {
+			unchanged++
+		}
+	}
+
+	summary := fmt.Sprintf("run %s: %d new, %d duplicates (%d by URL, %d by title), %d/%d raw payloads unchanged",
+		m.RunID, m.ArticlesWritten, m.DuplicatesByURL+m.DuplicatesByTitle, m.DuplicatesByURL, m.DuplicatesByTitle,
+		unchanged, len(m.Sources))
+	if m.Pruned != nil {
+		summary += fmt.Sprintf(", pruned %d files and %d state entries", m.Pruned.Files, m.Pruned.StateEntries)
+	}
+	log.Print(summary)
+
 	if errors.Is(collectErr, collector.ErrAllSourcesFailed) {
-		log.Fatal(collectErr)
+		return collectErr
 	}
+
+	return nil
 }
 
 func getEnv(key, fallback string) string {

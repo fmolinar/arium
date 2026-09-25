@@ -147,3 +147,30 @@ func Truncate(s string, max int) string {
 
 	return strings.TrimRight(cut, " .,;:") + "…"
 }
+
+var nonAlphanumeric = regexp.MustCompile(`[^\p{L}\p{N}]+`)
+
+// hnPrefixes are stripped so "Show HN: X" matches a blog post titled "X".
+var hnPrefixes = []string{"show hn ", "ask hn ", "launch hn ", "tell hn "}
+
+// minTitleKeyWords keeps short, generic titles ("v3.2.0", "Release notes",
+// "Community meeting notes") out of title de-duplication, where unrelated
+// articles would collide.
+const minTitleKeyWords = 4
+
+// TitleKey reduces a title to a comparison key for spotting the same story
+// published under different URLs: lowercase, punctuation removed, HN prefixes
+// stripped. It returns "" for titles too short to compare safely.
+func TitleKey(title string) string {
+	key := strings.TrimSpace(nonAlphanumeric.ReplaceAllString(strings.ToLower(title), " "))
+
+	for _, prefix := range hnPrefixes {
+		key = strings.TrimPrefix(key, prefix)
+	}
+
+	if len(strings.Fields(key)) < minTitleKeyWords {
+		return ""
+	}
+
+	return key
+}

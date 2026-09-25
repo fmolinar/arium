@@ -137,37 +137,57 @@ func (c *Collector) fetch(ctx context.Context, src Source) (raw Raw, articles []
 	return raw, articles, ""
 }
 
-// Persist writes a Result to the store: raw payloads, new articles and
-// finally the manifest. A raw payload that fails to write is recorded as that
-// source's error rather than aborting the run.
-func Persist(store *Store, result Result, finishedAt time.Time) (Manifest, error) {
+// Persist writes a Result to the store while holding its lock: raw payloads
+// (skipping unchanged ones), articles not already stored, then prunes data
+// older than retention (0 disables pruning), and finally writes the manifest.
+// A raw payload that fails to write is recorded as that source's error rather
+// than aborting the run. It returns ErrLocked if another run holds the store.
+func Persist(store *Store, result Result, now time.Time, retention time.Duration) (Manifest, error) {
+	unlock, err := store.Lock()
+	if err != nil {
+		return Manifest{}, err
+	}
+	defer unlock()
+
 	for i, raw := range result.Raw {
 		if result.Sources[i].Error != "" || len(raw.Data) == 0 {
 			continue
 		}
 
-		path, err := store.WriteRaw(result.Run, result.Sources[i].Name, raw)
+		path, unchanged, err := store.WriteRaw(result.Run, result.Sources[i].Name, raw)
 		if err != nil {
 			result.Sources[i].Error = err.Error()
 			continue
 		}
 
 		result.Sources[i].RawPath = path
+		result.Sources[i].RawUnchanged = unchanged
 	}
 
-	written, articlesPath, err := store.WriteArticles(result.Run, result.Articles)
+	written, err := store.WriteArticles(result.Run, result.Articles)
 	if err != nil {
 		return Manifest{}, err
 	}
 
 	manifest := Manifest{
-		RunID:           result.Run.ID,
-		StartedAt:       result.Run.StartedAt,
-		FinishedAt:      finishedAt.UTC(),
-		Sources:         result.Sources,
-		ArticlesWritten: written,
-		ArticlesPath:    articlesPath,
+		RunID:             result.Run.ID,
+		StartedAt:         result.Run.StartedAt,
+		Sources:           result.Sources,
+		ArticlesWritten:   written.Written,
+		ArticlesPath:      written.Path,
+		DuplicatesByURL:   written.DuplicatesByURL,
+		DuplicatesByTitle: written.DuplicatesByTitle,
 	}
+
+	if retention > 0 {
+		pruned, err := store.Prune(now, retention)
+		if err != nil {
+			return Manifest{}, fmt.Errorf("prune: %w", err)
+		}
+		manifest.Pruned = &pruned
+	}
+
+	manifest.FinishedAt = now.UTC()
 
 	return manifest, store.WriteManifest(manifest)
 }
