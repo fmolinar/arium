@@ -224,6 +224,8 @@ Each article uses the same JSON shape as the frontend's news items:
   back.
 - **Failures:** a failed source is recorded in the manifest and the others carry on. A one-off run exits
   non-zero only if *every* source fails.
+- **Health:** before each wait the scheduler writes the next run time to a heartbeat file. `-healthcheck` fails
+  if that run is more than 10 minutes overdue, meaning the loop died or a run is hung.
 - **Concurrency:** a lock file stops a manual `-once` run and the scheduled run from writing at the same time.
 - **Delivery is at-least-once:** a crash between writing articles and saving state can repeat some articles in
   the next run, so consumers should deduplicate by `id`.
@@ -239,6 +241,8 @@ Each article uses the same JSON shape as the frontend's news items:
 | `-retention` | `COLLECTOR_RETENTION` | `720h` | Delete stored data older than this; `0` keeps everything |
 | `-since` | `COLLECTOR_SINCE` | `168h` | Ignore articles older than this |
 | `-timeout` | `COLLECTOR_SOURCE_TIMEOUT` | `15s` | Per-source timeout |
+| `-health-file` | `COLLECTOR_HEALTH_FILE` | `$TMPDIR/collector-heartbeat.json` | Heartbeat written in schedule mode |
+| `-healthcheck` | | | Exit non-zero if the next scheduled run is overdue |
 | `-once` | | | Run once even if a schedule is set |
 | `-dry-run` | | | Print articles as NDJSON, write nothing |
 

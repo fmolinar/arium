@@ -31,7 +31,8 @@ flowchart LR
 
 The browser calls the API directly on port 8080, so the browser, not the `app` container, is what talks to
 `backend`. The API's CORS policy allows `FRONTEND_URL` (`http://localhost:3000`). The collector only makes
-outbound HTTPS requests and uses the default network.
+outbound HTTPS requests and uses the default network. Its healthcheck runs `collector -healthcheck` every minute
+and marks the container unhealthy once a scheduled run is more than 10 minutes overdue.
 
 ## Images
 
@@ -84,5 +85,5 @@ collector volume appears as `docker_collector_data`.
 
 - MongoDB is published on host port 27017 with no authentication. That's fine for a local machine, but don't
   expose it beyond that.
-- `depends_on: mongo` only orders startup; there's no healthcheck. The backend can start before MongoDB accepts
+- `depends_on: mongo` only orders startup; mongo and backend have no healthcheck. The backend can start before MongoDB accepts
   connections, and `restart: unless-stopped` retries it.
