@@ -6,6 +6,9 @@
 // the given times every day, plus once at startup with -run-on-start. With -mongo-uri each run also syncs the stored
 // articles into MongoDB for the API to serve. Logs are JSON on stdout, and with
 // -metrics-address Prometheus metrics are served at /metrics.
+//
+// On AWS Lambda (AWS_LAMBDA_RUNTIME_API set) it serves one run per
+// invocation and stores articles in MongoDB only; see lambda.go.
 package main
 
 import (
@@ -41,7 +44,10 @@ type options struct {
 	retention  time.Duration
 	healthFile string
 	news       *news.Service // nil when MongoDB sync is off
-	metrics    *runMetrics
+	// mongoOnly stores articles in news only, deduplicating against MongoDB
+	// instead of the file store in outDir (Lambda mode).
+	mongoOnly bool
+	metrics   *runMetrics
 }
 
 func main() {
@@ -126,6 +132,14 @@ func main() {
 	}
 
 	opts := options{outDir: *outDir, dryRun: *dryRun, retention: *retention, healthFile: *healthFile, metrics: runMetrics}
+
+	if lambdaRuntime() {
+		opts.mongoOnly = true
+		if err := startLambda(ctx, c, opts, *mongoURI, *mongoDB); err != nil {
+			logging.Fatal("lambda", "error", err)
+		}
+		return
+	}
 
 	if *mongoURI != "" && !*dryRun {
 		// Connect doesn't contact the server, so an unreachable MongoDB fails
@@ -241,6 +255,26 @@ func runOnce(ctx context.Context, c *collector.Collector, opts options) error {
 		slog.Info("dry run, nothing written", "articles", len(result.Articles))
 
 		return collectErr
+	}
+
+	if opts.mongoOnly {
+		res, err := ingestNews(ctx, opts.news, result.Articles, time.Now(), opts.retention)
+		if err != nil {
+			return fmt.Errorf("store in MongoDB: %w", err)
+		}
+		opts.metrics.recordIngested(ctx, res)
+
+		slog.Info("run stored", "run_id", result.Run.ID,
+			"new", res.Inserted,
+			"duplicates_by_url", res.DuplicatesByURL,
+			"duplicates_by_title", res.DuplicatesByTitle,
+			"expired", res.Deleted,
+			"sources", len(result.Sources))
+
+		if errors.Is(collectErr, collector.ErrAllSourcesFailed) {
+			return collectErr
+		}
+		return nil
 	}
 
 	store, err := collector.NewStore(opts.outDir)

@@ -163,6 +163,11 @@ then syncs the stored articles into Mongo's `news` collection, which the API ser
   fresh stack gets news without waiting for the next slot. It writes a heartbeat due now before that run, so the
   healthcheck gives it the usual 10-minute grace.
 - Hacker News is low-volume by design (expect 0–5 stories a week); the RSS feeds supply most articles.
+- On AWS Lambda (`devops/terraform/`, see its README) the same binary detects `AWS_LAMBDA_RUNTIME_API` and runs
+  one collection per invocation (EventBridge Scheduler) in Mongo-only mode: no file store, `news.Service.Ingest`
+  inserts articles whose `_id` and `title_key` aren't stored yet (never overwriting, so `fetched_at` stays first-seen)
+  and deletes expired ones. The URI comes from `MONGO_URI` or the SSM SecureString named by `MONGO_URI_PARAMETER`.
+  Build with `devops/terraform/build.sh`. `aws-lambda-go` is pinned to v1.54.0 (v1.55+ needs Go 1.26).
 - Collector tests never touch the network: they use `httptest.Server` with `testdata/` fixtures, and `t.TempDir()`
   for storage.
 

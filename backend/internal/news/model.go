@@ -17,6 +17,9 @@ type Article struct {
 	PublishedAt time.Time `bson:"published_at" json:"publishedAt"`
 	FetchedAt   time.Time `bson:"fetched_at"   json:"fetchedAt"`
 	Origin      string    `bson:"origin"       json:"origin"`
+	// TitleKey is collector.TitleKey(Title), stored so Ingest can skip the
+	// same story under another URL. Empty for titles too short to compare.
+	TitleKey string `bson:"title_key,omitempty" json:"-"`
 }
 
 // ListQuery selects a page of articles, newest first.
@@ -44,4 +47,12 @@ type ImportResult struct {
 	Upserted int64
 	Updated  int64
 	Deleted  int64
+}
+
+// IngestResult counts what Service.Ingest changed.
+type IngestResult struct {
+	Inserted          int64
+	DuplicatesByURL   int64
+	DuplicatesByTitle int64
+	Deleted           int64
 }

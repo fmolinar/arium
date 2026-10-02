@@ -98,3 +98,65 @@ func TestNewsImportAndList(t *testing.T) {
 		}
 	})
 }
+
+func TestNewsIngest(t *testing.T) {
+	ctx := context.Background()
+	first := time.Now().UTC().Truncate(time.Millisecond)
+	retention := 30 * 24 * time.Hour
+
+	article := func(id, titleKey string, fetchedAt time.Time) news.Article {
+		return news.Article{ID: id, Title: id, TitleKey: titleKey, Tags: []string{"sre"}, PublishedAt: fetchedAt, FetchedAt: fetchedAt}
+	}
+
+	res, err := ingestService.Ingest(ctx, []news.Article{
+		article("ingest-a", "same story", first),
+		article("ingest-b", "", first),
+		// Same story as ingest-a under another URL, in the same batch.
+		article("ingest-c", "same story", first),
+		// Same URL twice in the batch.
+		article("ingest-b", "", first),
+		article("ingest-old", "", first.Add(-31*24*time.Hour)),
+	}, first, 0)
+	if err != nil {
+		t.Fatalf("first ingest: %v", err)
+	}
+	if want := (news.IngestResult{Inserted: 3, DuplicatesByURL: 1, DuplicatesByTitle: 1}); res != want {
+		t.Errorf("first ingest = %+v, want %+v", res, want)
+	}
+
+	// A later run sees the same articles again, plus the story under a new
+	// URL. Nothing is overwritten, so fetched_at keeps the first-seen time,
+	// and retention deletes the expired article.
+	later := first.Add(8 * time.Hour)
+	res, err = ingestService.Ingest(ctx, []news.Article{
+		article("ingest-a", "same story", later),
+		article("ingest-b", "", later),
+		article("ingest-d", "same story", later),
+		article("ingest-e", "", later),
+	}, later, retention)
+	if err != nil {
+		t.Fatalf("second ingest: %v", err)
+	}
+	if want := (news.IngestResult{Inserted: 1, DuplicatesByURL: 2, DuplicatesByTitle: 1, Deleted: 1}); res != want {
+		t.Errorf("second ingest = %+v, want %+v", res, want)
+	}
+
+	page, err := ingestService.List(ctx, news.ListQuery{Limit: 10})
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+
+	fetched := map[string]time.Time{}
+	for _, a := range page.Items {
+		fetched[a.ID] = a.FetchedAt.UTC()
+	}
+	if got, want := len(fetched), 3; got != want {
+		t.Errorf("stored %d articles (%v), want %d", got, fetched, want)
+	}
+	if !fetched["ingest-a"].Equal(first) {
+		t.Errorf("ingest-a fetched_at = %v, want first-seen %v", fetched["ingest-a"], first)
+	}
+	if !fetched["ingest-e"].Equal(later) {
+		t.Errorf("ingest-e fetched_at = %v, want %v", fetched["ingest-e"], later)
+	}
+}
