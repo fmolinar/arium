@@ -43,6 +43,9 @@ services:
       - MONGO_URI=mongodb://mongo:27017/arium
       - MONGO_DB=arium
       - JWT_SECRET=${JWT_SECRET:?JWT_SECRET must be set (see devops/docker/.env.example)}
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+      # Prometheus metrics at /metrics, reachable only on the compose network.
+      - METRICS_ADDRESS=:9464
 
   # News collector. Runs on a schedule (3 times a day by default), keeps 30 days
   # of data in the collector_data volume, skips duplicate articles and syncs
@@ -75,6 +78,9 @@ services:
       - COLLECTOR_RETENTION=${COLLECTOR_RETENTION:-720h}
       - COLLECTOR_SINCE=${COLLECTOR_SINCE:-168h}
       - COLLECTOR_SOURCE_TIMEOUT=${COLLECTOR_SOURCE_TIMEOUT:-15s}
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+      # Prometheus metrics at /metrics, reachable only on the compose network.
+      - COLLECTOR_METRICS_ADDRESS=:9464
     # Unhealthy when a scheduled run is over 10 minutes late: the scheduler
     # loop died or a run is hung.
     healthcheck:
@@ -97,6 +103,52 @@ services:
     environment:
       - MONGO_INITDB_DATABASE=arium
 
+  # Scrapes the backend and collector /metrics endpoints (see
+  # devops/observability/prometheus/prometheus.yml). Bound to localhost only.
+  prometheus:
+    networks:
+      - arium_network
+    image: prom/prometheus:v3.15.0
+    container_name: arium-prometheus
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=${PROMETHEUS_RETENTION:-15d}
+    ports:
+      - "127.0.0.1:9090:9090"
+    volumes:
+      - ../observability/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    depends_on:
+      - backend
+      - collector
+
+  # Dashboards and the Prometheus datasource are provisioned from
+  # devops/observability/grafana. Open http://localhost:3001 (admin / the
+  # GRAFANA_ADMIN_PASSWORD from .env, default "admin").
+  grafana:
+    networks:
+      - arium_network
+    image: grafana/grafana:13.2.3
+    container_name: arium-grafana
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3001:3000"
+    volumes:
+      - ../observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ../observability/grafana/dashboards:/etc/grafana/dashboards:ro
+      - grafana_data:/var/lib/grafana
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-admin}
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_ANALYTICS_REPORTING_ENABLED=false
+      - GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH=/etc/grafana/dashboards/api.json
+    depends_on:
+      - prometheus
+
 volumes:
   mongo_data:
   collector_data:
+  prometheus_data:
+  grafana_data:

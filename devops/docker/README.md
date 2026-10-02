@@ -16,11 +16,18 @@ flowchart LR
     collector --- colVol[("volume: collector_data")]
     collector -- "sync news" --> mongo
 
+    prometheus["prometheus<br/>arium-prometheus"] -- "scrape :9464/metrics" --> backend
+    prometheus -- "scrape :9464/metrics" --> collector
+    grafana["grafana<br/>arium-grafana"] -- "PromQL" --> prometheus
+    user -- "127.0.0.1:3001" --> grafana
+
     subgraph net ["network: arium_network"]
         app
         backend
         mongo
         collector
+        prometheus
+        grafana
     end
 ```
 
@@ -30,12 +37,18 @@ flowchart LR
 | `backend` | `arium-backend` ([`Dockerfile.backend`](Dockerfile.backend)) | 8080 → 8080 | – | unless-stopped |
 | `mongo` | `mongo:latest` | 27017 → 27017 | `mongo_data` → `/data/db` | unless-stopped |
 | `collector` | `arium-collector` ([`Dockerfile.collector`](Dockerfile.collector)) | none | `collector_data` → `/data` | unless-stopped |
+| `prometheus` | `prom/prometheus:v3.15.0` | 127.0.0.1:9090 → 9090 | `prometheus_data` → `/prometheus` | unless-stopped |
+| `grafana` | `grafana/grafana:13.2.3` | 127.0.0.1:3001 → 3000 | `grafana_data` → `/var/lib/grafana` | unless-stopped |
 
 The browser calls the API at relative `/api` URLs on port 3000, and `vite preview` in the `app` container
 proxies them to `backend` (`API_PROXY_TARGET=http://backend:8080`), so those requests are same-origin. The API's
 port 8080 is still published for direct calls, and its CORS policy allows `FRONTEND_URL` (`http://localhost:3000`). The collector fetches
 sources over HTTPS and, after each run, syncs articles into Mongo's `news` collection over `arium_network`. Its healthcheck runs `collector -healthcheck` every minute
 and marks the container unhealthy once a scheduled run is more than 10 minutes overdue.
+
+The backend and collector serve Prometheus metrics on port 9464, which is reachable only on `arium_network`.
+Prometheus scrapes them every 15s, and Grafana reads Prometheus. Their configuration, datasource and dashboards
+are mounted read-only from [`devops/observability`](../observability). Both publish their ports on 127.0.0.1 only.
 
 ## Images
 
@@ -61,6 +74,9 @@ Compose reads `devops/docker/.env`, which is gitignored. Copy [`.env.example`](.
 | `COLLECTOR_RETENTION` | collector | `720h` | Keep 30 days of data |
 | `COLLECTOR_SINCE` | collector | `168h` | Ignore articles older than 7 days (must be ≤ retention) |
 | `COLLECTOR_SOURCE_TIMEOUT` | collector | `15s` | Per-source timeout |
+| `LOG_LEVEL` | backend, collector | `info` | `debug`, `info`, `warn` or `error` |
+| `GRAFANA_ADMIN_PASSWORD` | grafana | `admin` | Password for the `admin` user. Applied when `grafana_data` is first created |
+| `PROMETHEUS_RETENTION` | prometheus | `15d` | How long Prometheus keeps metrics |
 
 The backend's `MONGO_URI`, `MONGO_DB`, `ADDRESS` and `FRONTEND_URL` are set in `compose.yaml` itself.
 
@@ -74,12 +90,17 @@ docker compose up -d --build                # build and start everything
 docker compose ps
 docker compose logs -f backend              # or app / mongo / collector
 docker compose down                         # stop; volumes are kept
-docker compose down -v                      # stop and DELETE mongo_data and collector_data
+docker compose down -v                      # stop and DELETE all volumes (Mongo, collector, Prometheus, Grafana data)
 
 # Collector
 docker compose logs -f collector            # runs, and the next scheduled time
 docker compose run --rm collector -once     # collect right now, alongside the scheduler
 docker run --rm -v docker_collector_data:/data alpine ls -R /data   # browse the volume
+
+# Observability
+open http://localhost:3001                  # Grafana (admin / GRAFANA_ADMIN_PASSWORD): Arium folder
+open http://localhost:9090/targets          # Prometheus scrape targets: api and collector should be UP
+docker compose logs backend | jq 'select(.msg == "request")'   # logs are JSON lines
 ```
 
 Volume names get the Compose project name as a prefix (by default `docker`, the directory name), which is why the
@@ -87,6 +108,8 @@ collector volume appears as `docker_collector_data`.
 
 ## Caveats
 
+- Grafana's admin password defaults to `admin`. Grafana and Prometheus listen only on 127.0.0.1, but set
+  `GRAFANA_ADMIN_PASSWORD` anyway if the host is shared.
 - MongoDB is published on host port 27017 with no authentication. That's fine for a local machine, but don't
   expose it beyond that.
 - `depends_on: mongo` only orders startup; mongo and backend have no healthcheck. The backend can start before MongoDB accepts

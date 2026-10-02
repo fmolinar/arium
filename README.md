@@ -27,7 +27,7 @@ backend/
 │
 ├── internal/
 │   ├── config/
-│   │   └── config.go           # Env var loading (ADDRESS, FRONTEND_URL, MONGO_URI, MONGO_DB, JWT_SECRET)
+│   │   └── config.go           # Env var loading (ADDRESS, FRONTEND_URL, MONGO_URI, MONGO_DB, JWT_SECRET, METRICS_ADDRESS)
 │   │
 │   ├── collector/              # News pipeline: normalize, tag, dedupe, atomic file store
 │   │   ├── rss/                # RSS/Atom feed source
@@ -48,7 +48,11 @@ backend/
 │   ├── middleware/
 │   │   ├── auth.go             # JWT issuing/validation, route protection
 │   │   ├── cors.go
-│   │   └── logging.go
+│   │   ├── logging.go          # Request ID, JSON access log, panic recovery
+│   │   └── metrics.go          # RED metrics per route (OpenTelemetry)
+│   │
+│   ├── logging/                # JSON slog setup (request/trace IDs from the context)
+│   ├── telemetry/              # OpenTelemetry meter provider, Prometheus /metrics listener
 │   │
 │   └── server/
 │       └── server.go           # Router, HTTP server, health check
@@ -174,8 +178,15 @@ docker run --rm -v docker_collector_data:/data alpine ls -R /data # inspect the 
 curl 'localhost:8080/api/v1/news?tag=sre&limit=5'                 # read the synced news through the API
 ```
 
+### Observability
+
+The API and collector log JSON to stdout via `log/slog` and expose OpenTelemetry metrics in the Prometheus format.
+Compose also runs Prometheus (`localhost:9090`) and Grafana (`localhost:3001`, user `admin`), with the datasource
+and the **Arium API** (RED metrics per route) and **Arium Collector** dashboards provisioned from
+[`devops/observability`](devops/observability).
+
 ## Roadmap
 
-Next up: switching the frontend from mock data to `GET /api/v1/news`, then observability with OpenTelemetry and
-the Grafana stack: structured logs, Prometheus metrics and dashboards, Loki, Tempo traces, and SLO-based alerting.
+Next up in observability: logs in Loki, Tempo traces, and SLO-based alerting. Structured logs and Prometheus
+metrics with Grafana dashboards are done.
 Details are in [`CLAUDE.md`](CLAUDE.md#next-steps).

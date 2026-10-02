@@ -1,0 +1,21 @@
+# Prometheus scrape config for the Docker Compose stack (devops/docker).
+# Both Go services serve OpenTelemetry metrics in the Prometheus format at
+# /metrics on port 9464, separate from their main ports.
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: api
+    static_configs:
+      - targets: ["backend:9464"]
+
+  # Metrics exist only while the scheduler is up; a one-off
+  # `docker compose run --rm collector -once` exits before it can be scraped.
+  - job_name: collector
+    static_configs:
+      - targets: ["collector:9464"]
+
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]

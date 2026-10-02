@@ -4,7 +4,8 @@
 //
 // By default it runs once and exits. With -schedule it stays up and runs at
 // the given times every day, plus once at startup with -run-on-start. With -mongo-uri each run also syncs the stored
-// articles into MongoDB for the API to serve.
+// articles into MongoDB for the API to serve. Logs are JSON on stdout, and with
+// -metrics-address Prometheus metrics are served at /metrics.
 package main
 
 import (
@@ -13,7 +14,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
@@ -29,7 +30,9 @@ import (
 	"github.com/fmolinar/arium/backend/internal/collector"
 	"github.com/fmolinar/arium/backend/internal/collector/hackernews"
 	"github.com/fmolinar/arium/backend/internal/collector/rss"
+	"github.com/fmolinar/arium/backend/internal/logging"
 	"github.com/fmolinar/arium/backend/internal/news"
+	"github.com/fmolinar/arium/backend/internal/telemetry"
 )
 
 type options struct {
@@ -38,9 +41,12 @@ type options struct {
 	retention  time.Duration
 	healthFile string
 	news       *news.Service // nil when MongoDB sync is off
+	metrics    *runMetrics
 }
 
 func main() {
+	logging.Setup("arium-collector")
+
 	var (
 		outDir    = flag.String("out", getEnv("COLLECTOR_OUT_DIR", "./data"), "output directory (env COLLECTOR_OUT_DIR)")
 		sources   = flag.String("sources", os.Getenv("COLLECTOR_SOURCES"), "sources config JSON; built-in list if empty (env COLLECTOR_SOURCES)")
@@ -56,17 +62,16 @@ func main() {
 		mongoURI = flag.String("mongo-uri", os.Getenv("MONGO_URI"), "sync stored articles into this MongoDB after each run; empty disables (env MONGO_URI)")
 		mongoDB  = flag.String("mongo-db", getEnv("MONGO_DB", "arium"), "MongoDB database for -mongo-uri (env MONGO_DB)")
 
+		metricsAddr = flag.String("metrics-address", os.Getenv("COLLECTOR_METRICS_ADDRESS"), `serve Prometheus metrics at /metrics on this address, e.g. ":9464"; empty disables (env COLLECTOR_METRICS_ADDRESS)`)
+
 		healthFile  = flag.String("health-file", getEnv("COLLECTOR_HEALTH_FILE", filepath.Join(os.TempDir(), "collector-heartbeat.json")), "heartbeat file written in schedule mode (env COLLECTOR_HEALTH_FILE)")
 		healthcheck = flag.Bool("healthcheck", false, "exit non-zero if the scheduler's next run is overdue (for a container healthcheck)")
 	)
 	flag.Parse()
 
-	log.SetFlags(0)
-	log.SetPrefix("collector: ")
-
 	if *healthcheck {
 		if err := checkHeartbeat(*healthFile, time.Now()); err != nil {
-			log.Fatalf("unhealthy: %v", err)
+			logging.Fatal("unhealthy", "error", err)
 		}
 		return
 	}
@@ -74,7 +79,8 @@ func main() {
 	// Pruning drops dedup state older than -retention, so articles older than
 	// that must already be filtered out by -since or they'd be stored again.
 	if *retention > 0 && (*maxAge <= 0 || *maxAge > *retention) {
-		log.Fatalf("-since (%s) must be set and no longer than -retention (%s), or old articles would be re-stored after pruning", *maxAge, *retention)
+		logging.Fatal("-since must be set and no longer than -retention, or old articles would be re-stored after pruning",
+			"since", maxAge.String(), "retention", retention.String())
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -82,7 +88,7 @@ func main() {
 
 	cfg, err := loadSources(*sources)
 	if err != nil {
-		log.Fatal(err)
+		logging.Fatal("load sources", "error", err)
 	}
 
 	client := &http.Client{Timeout: 30 * time.Second}
@@ -104,14 +110,29 @@ func main() {
 		MaxAge:        *maxAge,
 	}
 
-	opts := options{outDir: *outDir, dryRun: *dryRun, retention: *retention, healthFile: *healthFile}
+	metrics, err := telemetry.NewMetrics("arium-collector")
+	if err != nil {
+		logging.Fatal("set up metrics", "error", err)
+	}
+	defer metrics.Shutdown(context.Background())
+
+	if *metricsAddr != "" && !*dryRun {
+		metrics.Serve(ctx, *metricsAddr)
+	}
+
+	runMetrics, err := newRunMetrics(metrics.Meter("github.com/fmolinar/arium/backend/cmd/collector"))
+	if err != nil {
+		logging.Fatal("set up metrics", "error", err)
+	}
+
+	opts := options{outDir: *outDir, dryRun: *dryRun, retention: *retention, healthFile: *healthFile, metrics: runMetrics}
 
 	if *mongoURI != "" && !*dryRun {
 		// Connect doesn't contact the server, so an unreachable MongoDB fails
 		// individual syncs instead of stopping the collector.
 		client, err := mongo.Connect(mongooptions.Client().ApplyURI(*mongoURI).SetServerSelectionTimeout(10 * time.Second))
 		if err != nil {
-			log.Fatalf("-mongo-uri: %v", err)
+			logging.Fatal("-mongo-uri", "error", err)
 		}
 		defer client.Disconnect(context.Background())
 
@@ -121,24 +142,24 @@ func main() {
 	if *schedule == "" || *once {
 		// Exit non-zero only when nothing could be fetched, so a scheduler
 		// alerts on a full outage but not on one flaky feed.
-		if err := runOnce(ctx, c, opts); err != nil {
-			log.Fatal(err)
+		if err := run(ctx, c, opts); err != nil {
+			logging.Fatal("run failed", "error", err)
 		}
 		return
 	}
 
 	if *dryRun {
-		log.Fatal("-dry-run can't be combined with -schedule; add -once")
+		logging.Fatal("-dry-run can't be combined with -schedule; add -once")
 	}
 
 	loc, err := time.LoadLocation(*timezone)
 	if err != nil {
-		log.Fatalf("-timezone: %v", err)
+		logging.Fatal("-timezone", "error", err)
 	}
 
 	sched, err := collector.ParseSchedule(*schedule, loc)
 	if err != nil {
-		log.Fatalf("-schedule: %v", err)
+		logging.Fatal("-schedule", "error", err)
 	}
 
 	runScheduled(ctx, c, opts, sched, *onStart)
@@ -149,42 +170,51 @@ func main() {
 // logged and the schedule carries on. Runs missed while the process was down
 // are not caught up.
 func runScheduled(ctx context.Context, c *collector.Collector, opts options, sched collector.Schedule, runNow bool) {
-	log.Printf("scheduled: daily at %s, retention %s", sched, opts.retention)
+	slog.Info("scheduled", "times", sched.String(), "retention", opts.retention.String())
 
 	if runNow {
 		// A heartbeat due now gives the startup run the same grace period as
 		// a scheduled one before -healthcheck reports it as hung.
 		if err := writeHeartbeat(opts.healthFile, time.Now()); err != nil {
-			log.Printf("heartbeat: %v", err)
+			slog.Error("heartbeat", "error", err)
 		}
 
-		log.Print("startup run")
-		if err := runOnce(ctx, c, opts); err != nil {
-			log.Printf("run failed: %v", err)
+		slog.Info("startup run")
+		if err := run(ctx, c, opts); err != nil {
+			slog.Error("run failed", "error", err)
 		}
 	}
 
 	for {
 		next := sched.Next(time.Now())
-		log.Printf("next run at %s", next.Format(time.RFC3339))
+		slog.Info("next run", "at", next.Format(time.RFC3339))
 
 		if err := writeHeartbeat(opts.healthFile, next); err != nil {
-			log.Printf("heartbeat: %v", err)
+			slog.Error("heartbeat", "error", err)
 		}
 
 		timer := time.NewTimer(time.Until(next))
 		select {
 		case <-ctx.Done():
 			timer.Stop()
-			log.Print("shutting down")
+			slog.Info("shutting down")
 			return
 		case <-timer.C:
 		}
 
-		if err := runOnce(ctx, c, opts); err != nil {
-			log.Printf("run failed: %v", err)
+		if err := run(ctx, c, opts); err != nil {
+			slog.Error("run failed", "error", err)
 		}
 	}
+}
+
+// run is runOnce, recording the run's result and duration in opts.metrics.
+func run(ctx context.Context, c *collector.Collector, opts options) error {
+	start := time.Now()
+	err := runOnce(ctx, c, opts)
+	opts.metrics.recordRun(ctx, start, err)
+
+	return err
 }
 
 // runOnce collects from every source and stores (or, in dry-run mode,
@@ -194,11 +224,12 @@ func runOnce(ctx context.Context, c *collector.Collector, opts options) error {
 
 	for _, sr := range result.Sources {
 		if sr.Error != "" {
-			log.Printf("%-22s FAILED: %s", sr.Name, sr.Error)
+			slog.Warn("source failed", "source", sr.Name, "error", sr.Error)
 			continue
 		}
-		log.Printf("%-22s fetched=%d rejected=%d stale=%d", sr.Name, sr.Fetched, sr.Rejected, sr.Stale)
+		slog.Info("source fetched", "source", sr.Name, "fetched", sr.Fetched, "rejected", sr.Rejected, "stale", sr.Stale)
 	}
+	opts.metrics.recordSources(ctx, result.Sources)
 
 	if opts.dryRun {
 		enc := json.NewEncoder(os.Stdout)
@@ -207,7 +238,7 @@ func runOnce(ctx context.Context, c *collector.Collector, opts options) error {
 				return err
 			}
 		}
-		log.Printf("dry run: %d articles, nothing written", len(result.Articles))
+		slog.Info("dry run, nothing written", "articles", len(result.Articles))
 
 		return collectErr
 	}
@@ -221,6 +252,7 @@ func runOnce(ctx context.Context, c *collector.Collector, opts options) error {
 	if err != nil {
 		return err
 	}
+	opts.metrics.recordStored(ctx, m)
 
 	unchanged := 0
 	for _, sr := range m.Sources {
@@ -229,20 +261,25 @@ func runOnce(ctx context.Context, c *collector.Collector, opts options) error {
 		}
 	}
 
-	summary := fmt.Sprintf("run %s: %d new, %d duplicates (%d by URL, %d by title), %d/%d raw payloads unchanged",
-		m.RunID, m.ArticlesWritten, m.DuplicatesByURL+m.DuplicatesByTitle, m.DuplicatesByURL, m.DuplicatesByTitle,
-		unchanged, len(m.Sources))
-	if m.Pruned != nil {
-		summary += fmt.Sprintf(", pruned %d files and %d state entries", m.Pruned.Files, m.Pruned.StateEntries)
+	attrs := []any{
+		"run_id", m.RunID,
+		"new", m.ArticlesWritten,
+		"duplicates_by_url", m.DuplicatesByURL,
+		"duplicates_by_title", m.DuplicatesByTitle,
+		"raw_unchanged", unchanged,
+		"sources", len(m.Sources),
 	}
-	log.Print(summary)
+	if m.Pruned != nil {
+		attrs = append(attrs, "pruned_files", m.Pruned.Files, "pruned_state_entries", m.Pruned.StateEntries)
+	}
+	slog.Info("run stored", attrs...)
 
 	if opts.news != nil {
 		res, err := syncNews(ctx, opts.news, store, time.Now(), opts.retention)
 		if err != nil {
 			return fmt.Errorf("sync to MongoDB: %w", err)
 		}
-		log.Printf("mongo: %d inserted, %d updated, %d expired", res.Upserted, res.Updated, res.Deleted)
+		slog.Info("mongo sync", "inserted", res.Upserted, "updated", res.Updated, "expired", res.Deleted)
 	}
 
 	if errors.Is(collectErr, collector.ErrAllSourcesFailed) {
@@ -268,7 +305,7 @@ func getEnvBool(key string, fallback bool) bool {
 
 	b, err := strconv.ParseBool(value)
 	if err != nil {
-		log.Fatalf("collector: %s: %v", key, err)
+		logging.Fatal("invalid environment variable", "name", key, "error", err)
 	}
 
 	return b
@@ -282,7 +319,7 @@ func getEnvDuration(key string, fallback time.Duration) time.Duration {
 
 	d, err := time.ParseDuration(value)
 	if err != nil {
-		log.Fatalf("collector: %s: %v", key, err)
+		logging.Fatal("invalid environment variable", "name", key, "error", err)
 	}
 
 	return d

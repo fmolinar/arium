@@ -1,0 +1,14 @@
+# Loads every dashboard JSON mounted at /etc/grafana/dashboards (the
+# grafana/dashboards directory) into an "Arium" folder. Edit the JSON files in
+# the repo; changes made in the UI aren't saved back.
+apiVersion: 1
+
+providers:
+  - name: arium
+    folder: Arium
+    type: file
+    disableDeletion: true
+    allowUiUpdates: false
+    updateIntervalSeconds: 30
+    options:
+      path: /etc/grafana/dashboards

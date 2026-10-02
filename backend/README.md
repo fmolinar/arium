@@ -32,6 +32,8 @@ flowchart LR
 | Database | MongoDB via [mongo-driver v2](https://github.com/mongodb/mongo-go-driver) |
 | Auth | [golang-jwt v5](https://github.com/golang-jwt/jwt) (HS256), passwords hashed with bcrypt (`golang.org/x/crypto`) |
 | Feed parsing | [gofeed](https://github.com/mmcdole/gofeed) (RSS 2.0 and Atom) |
+| Logging | `log/slog`, JSON on stdout, with the request ID (and trace/span IDs once tracing lands) on each line |
+| Metrics | [OpenTelemetry](https://opentelemetry.io/docs/languages/go/) metrics SDK with the Prometheus exporter, served on a separate `/metrics` port |
 | Tests | standard `testing` + `net/http/httptest`; integration tests against a real MongoDB |
 | Container | multi-stage builds on `golang:1.25-alpine` → `alpine:3.22`, non-root user (see [`devops/docker`](../devops/docker)) |
 
@@ -46,11 +48,14 @@ backend/
 │       ├── config.go           # Loads and validates sources.json
 │       ├── sync.go             # Syncs stored articles into MongoDB after each run
 │       ├── health.go           # Heartbeat file and -healthcheck
+│       ├── metrics.go          # Collector run metrics (OpenTelemetry)
 │       └── sources.json        # Default feeds and Hacker News queries (embedded in the binary)
 ├── internal/
 │   ├── config/                 # API configuration from environment variables
 │   ├── database/               # MongoDB connection
-│   ├── middleware/             # JWT auth, CORS, request logging
+│   ├── middleware/             # JWT auth, CORS, JSON access log, panic recovery, RED metrics
+│   ├── logging/                # JSON slog setup; adds request and trace IDs from the context
+│   ├── telemetry/              # OpenTelemetry meter provider + Prometheus /metrics listener
 │   ├── server/                 # chi router, global middleware, /health, HTTP server
 │   ├── user/                   # User feature: model → repository → service → handler → routes
 │   ├── news/                   # News feed: same layering; also the Mongo import used by the collector
@@ -84,7 +89,7 @@ Errors are always `{"error": "<message>"}` with a matching status code.
 
 ```mermaid
 flowchart TB
-    req["HTTP request"] --> mw["Global middleware<br/>request ID · real IP · logging · panic recovery · 30s timeout · CORS"]
+    req["HTTP request"] --> mw["Global middleware<br/>request ID · real IP · JSON access log · RED metrics · panic recovery · 30s timeout · CORS"]
     mw --> router{"chi router"}
     router -- "/health" --> health["server.health<br/>pings MongoDB"]
     router -- "/api/v1/users/*" --> routes["user.Routes"]
@@ -150,6 +155,36 @@ sequenceDiagram
 | `FRONTEND_URL` | `http://localhost:3000` | Origin allowed by CORS |
 | `MONGO_URI` | `mongodb://localhost:27017/arium` | MongoDB connection string |
 | `MONGO_DB` | `arium` | Database name |
+| `LOG_LEVEL` | `info` | `debug`, `info`, `warn` or `error` |
+| `METRICS_ADDRESS` | empty = off | Serve Prometheus metrics at `/metrics` on this address, e.g. `:9464` (`:9464` in Compose) |
+
+### Logs and metrics
+
+Both programs log one JSON object per line to stdout through `log/slog`, tagged with `service` (`arium-api` or
+`arium-collector`). The API's access log has one `"msg":"request"` line per request with `method`, `path`,
+`route` (the chi pattern), `status`, `bytes`, `duration_ms`, `remote_ip`, `user_agent` and `request_id`. The
+request ID is also returned in the `X-Request-Id` header, and any line logged with the request's context carries
+it. Panics are logged as one JSON line with the stack trace and answered with a 500.
+
+Metrics use the OpenTelemetry SDK and are exported in the Prometheus format on their own listener, so `/metrics`
+isn't reachable through the API port. Along with Go runtime and process metrics:
+
+| Metric | Labels | |
+|---|---|---|
+| `http_server_request_duration_seconds` (histogram) | `http_request_method`, `http_route`, `http_response_status_code` | API request duration; its `_count` gives rate and errors |
+| `http_server_active_requests` | `http_request_method` | API requests in flight |
+| `collector_runs_total` | `result` (`success`, `failure`) | Collector runs |
+| `collector_run_duration_seconds` (histogram) | `result` | Run duration, including storage and the MongoDB sync |
+| `collector_articles_written_total` | | New articles stored |
+| `collector_articles_duplicates_total` | `match` (`url`, `title`) | Articles skipped as already stored |
+| `collector_last_run_articles` | | New articles stored by the last run |
+| `collector_source_articles_total` | `source` | Articles fetched per source, before deduplication |
+| `collector_source_failures_total` | `source` | Failed fetches per source |
+| `collector_last_success_timestamp_seconds` | | Unix time of the last successful run |
+
+`http_route` is the chi route pattern (`/api/v1/news`, `/api/v1/users/me`), or `unmatched` for a 404 that matched
+no route, so labels stay low-cardinality. Collector metrics can only be scraped while the scheduler is running.
+Prometheus and the Grafana dashboards that read these metrics are in [`devops/observability`](../devops/observability).
 
 ## News collector
 
@@ -254,6 +289,8 @@ Each article uses the same JSON shape as the frontend's news items:
 | `-healthcheck` | | | Exit non-zero if the next scheduled run is overdue |
 | `-mongo-uri` | `MONGO_URI` | empty = no sync | Sync stored articles into this MongoDB after each run |
 | `-mongo-db` | `MONGO_DB` | `arium` | Database for `-mongo-uri` |
+| `-metrics-address` | `COLLECTOR_METRICS_ADDRESS` | empty = off | Serve Prometheus metrics at `/metrics` on this address |
+| | `LOG_LEVEL` | `info` | `debug`, `info`, `warn` or `error` |
 | `-once` | | | Run once even if a schedule is set |
 | `-dry-run` | | | Print articles as NDJSON, write nothing |
 
