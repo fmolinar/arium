@@ -1,0 +1,13 @@
+# The dashboards in ../../dashboards reference this datasource by its uid.
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    uid: prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    editable: false
+    jsonData:
+      timeInterval: 15s # the scrape interval, so $__rate_interval covers enough samples

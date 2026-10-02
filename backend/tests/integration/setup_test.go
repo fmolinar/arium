@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"go.opentelemetry.io/otel/metric/noop"
+
 	"github.com/fmolinar/arium/backend/internal/config"
 	"github.com/fmolinar/arium/backend/internal/database"
 	"github.com/fmolinar/arium/backend/internal/news"
@@ -63,7 +65,7 @@ func TestMain(m *testing.M) {
 	}
 
 	newsService = news.NewService(newsRepo)
-	app := server.New(cfg, client, userHandler, news.NewHandler(newsService))
+	app := server.New(cfg, client, noop.NewMeterProvider().Meter("test"), userHandler, news.NewHandler(newsService))
 	testServer = httptest.NewServer(app.Handler())
 
 	code := m.Run()

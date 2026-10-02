@@ -8,6 +8,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	chimiddleware "github.com/go-chi/chi/v5/middleware"
 	"go.mongodb.org/mongo-driver/v2/mongo"
+	"go.opentelemetry.io/otel/metric"
 
 	"github.com/fmolinar/arium/backend/internal/config"
 	"github.com/fmolinar/arium/backend/internal/middleware"
@@ -21,14 +22,15 @@ type Server struct {
 	db         *mongo.Client
 }
 
-func New(cfg config.Config, db *mongo.Client, userHandler *user.Handler, newsHandler *news.Handler) *Server {
+// New builds the API server. HTTP metrics are recorded with meter.
+func New(cfg config.Config, db *mongo.Client, meter metric.Meter, userHandler *user.Handler, newsHandler *news.Handler) *Server {
 	server := &Server{
 		db: db,
 	}
 
 	server.httpServer = &http.Server{
 		Addr:              cfg.Address,
-		Handler:           server.routes(cfg, userHandler, newsHandler),
+		Handler:           server.routes(cfg, meter, userHandler, newsHandler),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
 		WriteTimeout:      15 * time.Second,
@@ -38,11 +40,12 @@ func New(cfg config.Config, db *mongo.Client, userHandler *user.Handler, newsHan
 	return server
 }
 
-func (s *Server) routes(cfg config.Config, userHandler *user.Handler, newsHandler *news.Handler) http.Handler {
+func (s *Server) routes(cfg config.Config, meter metric.Meter, userHandler *user.Handler, newsHandler *news.Handler) http.Handler {
 	router := chi.NewRouter()
 
 	router.Use(middleware.Logging)
-	router.Use(chimiddleware.Recoverer)
+	router.Use(middleware.Metrics(meter))
+	router.Use(middleware.Recoverer)
 	router.Use(chimiddleware.Timeout(30 * time.Second))
 
 	router.Use(middleware.CORS(cfg))

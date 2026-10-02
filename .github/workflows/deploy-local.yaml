@@ -76,13 +76,21 @@ jobs:
       - name: Build images
         run: docker compose build
 
+      - name: Check Prometheus config
+        run: docker compose run --rm --no-deps --entrypoint promtool prometheus check config /etc/prometheus/prometheus.yml
+
       - name: Deploy container
         run: docker compose up -d --remove-orphans
+
+      # prometheus.yml is bind-mounted, so compose doesn't recreate Prometheus
+      # when only that file changed. SIGHUP makes it reload the file.
+      - name: Reload Prometheus config
+        run: docker compose kill -s SIGHUP prometheus
 
       - name: Display deployment status
         run: |
           docker compose ps
-          docker compose logs --tail=50 app collector
+          docker compose logs --tail=50 app collector prometheus grafana
 
       - name: Remove unused images
         run: docker image prune -f

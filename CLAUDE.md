@@ -60,8 +60,9 @@ cp .env.example .env   # set JWT_SECRET
 docker compose up -d --build
 ```
 
-Runs `app` (React, host port 3000 → container 4173), `backend` (Go API, port 8080), and `mongo` (port 27017).
-`JWT_SECRET` is required — compose refuses to start the backend without it.
+Runs `app` (React, host port 3000 → container 4173), `backend` (Go API, port 8080), `mongo` (port 27017),
+`collector`, `prometheus` (127.0.0.1:9090) and `grafana` (127.0.0.1:3001, user `admin`, password
+`GRAFANA_ADMIN_PASSWORD`, default `admin`). `JWT_SECRET` is required — compose refuses to start the backend without it.
 
 ## Architecture
 
@@ -93,8 +94,30 @@ the bearer token and injects the user ID/role into the request context, readable
 ### Config
 
 `internal/config.Load()` reads env vars once at startup (`ADDRESS`, `FRONTEND_URL`, `MONGO_URI`, `MONGO_DB`,
-`JWT_SECRET`) and fails fast (`log.Fatal`) if `JWT_SECRET` is unset. `Config` is passed explicitly through the
+`JWT_SECRET`, `METRICS_ADDRESS`) and exits if `JWT_SECRET` is unset. `Config` is passed explicitly through the
 call chain rather than accessed as a global.
+
+### Logging and metrics
+
+- `internal/logging.Setup(service)` (first line of both `main`s) installs a JSON `slog` logger on stdout as the
+  default, at `LOG_LEVEL` (default info). That also routes the stdlib `log` package through it. Its handler adds
+  `request_id` (chi) and `trace_id`/`span_id` (OTel span in the context) to any record logged with a context, so
+  use `slog.InfoContext(r.Context(), ...)` in request code. `logging.Fatal` replaces `log.Fatal`.
+- `middleware.Logging` = chi `RequestID` + `RealIP` + one `"msg":"request"` access line per request (route is the
+  chi pattern); it also sets `X-Request-Id`. `middleware.Recoverer` replaces chi's, logging the panic as one JSON line.
+- `internal/telemetry.NewMetrics(service)` builds the OTel meter provider with the Prometheus exporter (its own
+  registry plus Go/process collectors). `Serve(ctx, addr)` exposes `/metrics` on a separate listener (`METRICS_ADDRESS`
+  for the API, `-metrics-address`/`COLLECTOR_METRICS_ADDRESS` for the collector; empty disables; `:9464` in Compose).
+- `middleware.Metrics(meter)` records `http.server.request.duration` (semconv buckets; method, `http.route`, status)
+  and `http.server.active_requests`; it sits outside `Recoverer` so panics count as 500s. Unmatched routes get
+  `http.route="unmatched"` to bound cardinality. `server.New` takes the meter; tests pass a noop one.
+- Collector metrics live in `cmd/collector/metrics.go` (`collector.runs{result}`, `collector.run.duration`,
+  `collector.articles.written`/`.duplicates{match}`, `collector.source.articles`/`.failures{source}`, and gauges
+  `collector.last_success.timestamp` and `collector.last_run.articles`). Counters start at 0 so `increase()` sees
+  them, but a run that ends before the first scrape (usually the startup run) is still missed; the gauges cover it.
+- Prometheus names come out with unit suffixes: `http_server_request_duration_seconds`, `collector_runs_total`,
+  `collector_last_success_timestamp_seconds`. Dashboards in `devops/observability/grafana/dashboards/*.json` use
+  those names and the datasource uid `prometheus`.
 
 ### News collector
 
@@ -147,7 +170,8 @@ then syncs the stored articles into Mongo's `news` collection, which the API ser
 
 `.github/workflows/deploy-local.yaml` runs on push to `main` (self-hosted runner): `test` job spins up Mongo,
 runs `gofmt`, `go vet`, `go build`, unit tests, and integration tests against it; `deploy` job (gated on `test`
-passing) rebuilds and redeploys the Docker Compose stack in place. There is no separate frontend CI job yet.
+passing) rebuilds, checks `prometheus.yml` with `promtool`, redeploys the Docker Compose stack in place, and
+sends Prometheus a `SIGHUP` (its config is bind-mounted, so compose doesn't recreate it on a config-only change). There is no separate frontend CI job yet.
 
 The workflow runs only on pushes to `main`, so PRs get no CI. `main` requires a code-owner review; the owner merges
 with `gh pr merge --admin` (use `gh api -X PATCH repos/fmolinar/arium/pulls/<n> -f base=main` to retarget a PR,
@@ -160,16 +184,14 @@ Decisions already made (don't re-litigate): MongoDB stays the store for news (al
 data, a few thousand docs at most; no Postgres/Elasticsearch). Observability uses OpenTelemetry with the Grafana
 stack, not ELK (Elasticsearch is too heavy for the Docker Desktop host, and ELK is log-centric).
 
-1. **Structured logging.** Switch the API and collector to `log/slog` with JSON output, carrying the chi request
-   ID and, once tracing lands, trace/span IDs. Replace the plain-text `middleware.Logging`.
-2. **Metrics + Grafana.** Instrument with OpenTelemetry (Prometheus exporter or OTLP → Prometheus). API: RED
-   metrics per route (rate, errors, duration). Collector: articles per run, per-source failures, run duration, and
-   a last-successful-run timestamp (which should eventually replace the heartbeat-file healthcheck). Add Grafana with
-   provisioned datasources and dashboards committed to the repo. `grafana/otel-lgtm` is fine to start with; split
-   into separate Prometheus/Loki/Tempo/Grafana services later to show the production shape.
-3. **Logs in Loki**, shipped from container stdout.
+Done: **structured logging** (`log/slog` JSON) and **metrics + Grafana** (OTel → Prometheus exporter, scraped by
+a `prometheus` service; Grafana with provisioned datasource and dashboards), as separate services rather than
+`grafana/otel-lgtm`. The collector's `collector_last_success_timestamp_seconds` should eventually replace the
+heartbeat-file healthcheck.
+
+3. **Logs in Loki**, shipped from container stdout (already JSON, with `service` and `request_id` fields).
 4. **Traces in Tempo**: OTel HTTP middleware on chi plus the MongoDB driver instrumentation, so a request is
-   traceable browser → API → Mongo.
+   traceable browser → API → Mongo. Logs pick up `trace_id`/`span_id` automatically once spans are in the context.
 5. **SLOs and alerting**: availability/latency SLOs for the API, burn-rate alerts, and a collector staleness alert
    (no successful run in ~10h) via Grafana alerting or Alertmanager.
 
