@@ -1,0 +1,6 @@
+# Copy to terraform.tfvars (gitignored) to override defaults. Pass the MongoDB
+# URI through the environment instead of this file:
+#   export TF_VAR_mongo_uri='mongodb+srv://...'
+
+aws_region = "us-east-1"
+# schedule_enabled = false

@@ -8,6 +8,7 @@ upcoming work and aren't in the repository yet.
 |---|---|---|
 | [`docker/`](docker) | in use | Dockerfiles for the frontend, API and collector, and the Compose stack |
 | [`observability/`](observability) | in use | Prometheus scrape config, Grafana datasource and dashboards |
+| [`terraform/`](terraform) | in use | The news collector on AWS Lambda, scheduled by EventBridge, writing to MongoDB Atlas |
 | `jenkins/` | planned | Jenkins pipeline |
 | `kubernetes/` | planned | Kubernetes manifests (the collector's schedule maps naturally onto a `CronJob`) |
 
