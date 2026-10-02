@@ -10,6 +10,7 @@ import (
 	"go.opentelemetry.io/otel/metric"
 
 	"github.com/fmolinar/arium/backend/internal/collector"
+	"github.com/fmolinar/arium/backend/internal/news"
 )
 
 // runMetrics are the collector's instruments. Prometheus only sees them while
@@ -117,6 +118,14 @@ func (m *runMetrics) recordStored(ctx context.Context, manifest collector.Manife
 	m.lastWritten.Store(int64(manifest.ArticlesWritten))
 	m.duplicates.Add(ctx, int64(manifest.DuplicatesByURL), metric.WithAttributes(attribute.String("match", "url")))
 	m.duplicates.Add(ctx, int64(manifest.DuplicatesByTitle), metric.WithAttributes(attribute.String("match", "title")))
+}
+
+// recordIngested counts what a Mongo-only (Lambda) run stored.
+func (m *runMetrics) recordIngested(ctx context.Context, res news.IngestResult) {
+	m.written.Add(ctx, res.Inserted)
+	m.lastWritten.Store(res.Inserted)
+	m.duplicates.Add(ctx, res.DuplicatesByURL, metric.WithAttributes(attribute.String("match", "url")))
+	m.duplicates.Add(ctx, res.DuplicatesByTitle, metric.WithAttributes(attribute.String("match", "title")))
 }
 
 // recordRun records a finished run that started at start; err is runOnce's

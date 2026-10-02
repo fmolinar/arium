@@ -22,6 +22,9 @@ import (
 var (
 	testServer  *httptest.Server
 	newsService *news.Service // for seeding articles
+	// ingestService writes to a database of its own, so Ingest tests don't
+	// change what the API lists.
+	ingestService *news.Service
 )
 
 // TestMain spins up the real HTTP server against a MongoDB instance reachable
@@ -65,6 +68,15 @@ func TestMain(m *testing.M) {
 	}
 
 	newsService = news.NewService(newsRepo)
+
+	ingestDB := cfg.MongoDatabase + "_ingest"
+	ingestRepo := news.NewRepository(client.Database(ingestDB))
+	if err := ingestRepo.EnsureIndexes(ctx); err != nil {
+		fmt.Fprintf(os.Stderr, "ensure indexes: %v\n", err)
+		os.Exit(1)
+	}
+	ingestService = news.NewService(ingestRepo)
+
 	app := server.New(cfg, client, noop.NewMeterProvider().Meter("test"), userHandler, news.NewHandler(newsService))
 	testServer = httptest.NewServer(app.Handler())
 
@@ -74,6 +86,7 @@ func TestMain(m *testing.M) {
 
 	cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	_ = client.Database(cfg.MongoDatabase).Drop(cleanupCtx)
+	_ = client.Database(ingestDB).Drop(cleanupCtx)
 	_ = client.Disconnect(cleanupCtx)
 	cleanupCancel()
 

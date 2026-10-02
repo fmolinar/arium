@@ -58,6 +58,25 @@ func (s *Service) Import(ctx context.Context, articles []Article, now time.Time,
 	return result, nil
 }
 
+// Ingest inserts the articles that aren't stored yet (by ID or title key) and,
+// when retention is positive, deletes articles fetched longer ago than
+// retention. Unlike Import it never overwrites a stored article, so MongoDB
+// alone can hold the dedup state.
+func (s *Service) Ingest(ctx context.Context, articles []Article, now time.Time, retention time.Duration) (IngestResult, error) {
+	result, err := s.repo.InsertNew(ctx, articles)
+	if err != nil {
+		return result, err
+	}
+
+	if retention > 0 {
+		if result.Deleted, err = s.repo.DeleteFetchedBefore(ctx, now.Add(-retention)); err != nil {
+			return result, err
+		}
+	}
+
+	return result, nil
+}
+
 // EncodeCursor returns an opaque, URL-safe token for c.
 func EncodeCursor(c Cursor) string {
 	raw := c.PublishedAt.UTC().Format(time.RFC3339Nano) + "|" + c.ID

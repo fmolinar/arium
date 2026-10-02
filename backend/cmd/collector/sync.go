@@ -45,21 +45,7 @@ func importable(stored []collector.Article, cutoff time.Time) []news.Article {
 			continue
 		}
 
-		n := news.Article{
-			ID:          a.ID,
-			Title:       a.Title,
-			Summary:     a.Summary,
-			Source:      a.Source,
-			URL:         a.URL,
-			Tags:        a.Tags,
-			PublishedAt: a.PublishedAt,
-			FetchedAt:   a.FetchedAt,
-			Origin:      a.Origin,
-		}
-		if n.Tags == nil {
-			n.Tags = []string{}
-		}
-
+		n := toNews(a)
 		if i, ok := index[a.ID]; ok {
 			out[i] = n
 			continue
@@ -69,4 +55,40 @@ func importable(stored []collector.Article, cutoff time.Time) []news.Article {
 	}
 
 	return out
+}
+
+// toNews converts a collector article to the MongoDB schema.
+func toNews(a collector.Article) news.Article {
+	n := news.Article{
+		ID:          a.ID,
+		Title:       a.Title,
+		Summary:     a.Summary,
+		Source:      a.Source,
+		URL:         a.URL,
+		Tags:        a.Tags,
+		PublishedAt: a.PublishedAt,
+		FetchedAt:   a.FetchedAt,
+		Origin:      a.Origin,
+		TitleKey:    collector.TitleKey(a.Title),
+	}
+	if n.Tags == nil {
+		n.Tags = []string{}
+	}
+
+	return n
+}
+
+// ingestNews stores a run's articles straight into MongoDB, which then holds
+// the dedup state instead of the file store. It's how the collector runs on
+// AWS Lambda, where nothing on disk outlives an invocation.
+func ingestNews(ctx context.Context, svc *news.Service, articles []collector.Article, now time.Time, retention time.Duration) (news.IngestResult, error) {
+	ctx, cancel := context.WithTimeout(ctx, syncTimeout)
+	defer cancel()
+
+	converted := make([]news.Article, 0, len(articles))
+	for _, a := range articles {
+		converted = append(converted, toNews(a))
+	}
+
+	return svc.Ingest(ctx, converted, now, retention)
 }
