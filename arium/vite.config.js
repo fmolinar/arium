@@ -15,6 +15,26 @@ const allowedHosts = (process.env.ALLOWED_HOSTS ?? '')
   .map((h) => h.trim())
   .filter(Boolean)
 
+// Sent with every page `vite preview` serves, which is what goarium.com runs.
+// Everything the app loads (scripts, styles, fonts) is bundled and served from
+// its own origin, and it only calls its own /api, so the policy can be 'self'.
+// Inline styles stay allowed for React's style props.
+const securityHeaders = {
+  'Content-Security-Policy': [
+    "default-src 'self'",
+    "style-src 'self' 'unsafe-inline'",
+    "img-src 'self' data:",
+    "object-src 'none'",
+    "base-uri 'self'",
+    "form-action 'self'",
+    "frame-ancestors 'none'",
+  ].join('; '),
+  'X-Content-Type-Options': 'nosniff',
+  'X-Frame-Options': 'DENY',
+  'Referrer-Policy': 'strict-origin-when-cross-origin',
+  'Permissions-Policy': 'camera=(), microphone=(), geolocation=()',
+}
+
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [react(), tailwindcss()],
@@ -24,5 +44,6 @@ export default defineConfig({
   preview: {
     proxy: { '/api': apiTarget },
     allowedHosts,
+    headers: securityHeaders,
   },
 })

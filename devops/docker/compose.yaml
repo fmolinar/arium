@@ -36,8 +36,10 @@ services:
     image: arium-backend:latest
     container_name: arium-backend
     restart: unless-stopped
+    # Localhost only: the app reaches the API over the compose network, and
+    # the internet through the app's /api proxy, behind Cloudflare.
     ports:
-      - "8080:8080"
+      - "127.0.0.1:8080:8080"
     depends_on:
       - mongo
     environment:
@@ -125,8 +127,9 @@ services:
     image: mongo:latest
     container_name: arium-mongo
     restart: unless-stopped
+    # Localhost only: this mongo has no authentication.
     ports:
-      - "27017:27017"
+      - "127.0.0.1:27017:27017"
     volumes:
       - mongo_data:/data/db
     environment:

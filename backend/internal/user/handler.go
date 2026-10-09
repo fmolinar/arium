@@ -24,8 +24,9 @@ func (h *Handler) Register(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if req.Name == "" || req.Email == "" || req.Password == "" {
-		response.Error(w, http.StatusBadRequest, "name, email and password are required")
+	req.normalize()
+	if msg := req.validate(); msg != "" {
+		response.Error(w, http.StatusBadRequest, msg)
 		return
 	}
 
@@ -49,6 +50,7 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 		response.Error(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
+	req.normalize()
 
 	result, err := h.service.Login(r.Context(), req)
 	if err != nil {
@@ -85,6 +87,11 @@ func (h *Handler) UpdateMe(w http.ResponseWriter, r *http.Request) {
 	var req UpdateProfileRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		response.Error(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	req.normalize()
+	if msg := req.validate(); msg != "" {
+		response.Error(w, http.StatusBadRequest, msg)
 		return
 	}
 

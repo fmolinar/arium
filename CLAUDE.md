@@ -10,7 +10,7 @@ Compose (`devops/docker/`).
 
 ## Commands
 
-### Backend (`backend/`, Go 1.25)
+### Backend (`backend/`, Go 1.26+, toolchain pinned to go1.27.2)
 
 ```sh
 cd backend
@@ -60,7 +60,7 @@ cp .env.example .env   # set JWT_SECRET
 docker compose up -d --build
 ```
 
-Runs `app` (React, host port 3000 → container 4173), `backend` (Go API, port 8080), `mongo` (port 27017),
+Runs `app` (React, host port 3000 → container 4173), `backend` (Go API, 127.0.0.1:8080), `mongo` (127.0.0.1:27017, no auth),
 `collector`, `prometheus` (127.0.0.1:9090) and `grafana` (127.0.0.1:3001, user `admin`, password
 `GRAFANA_ADMIN_PASSWORD`, default `admin`). `JWT_SECRET` is required — compose refuses to start the backend without it.
 
@@ -87,7 +87,9 @@ New backend features should follow this same model/repository/service/handler/ro
 ### Auth
 
 JWT (HS256) issued by `middleware.NewToken` on login/register, carrying the user ID as `Subject` and a `Role`
-custom claim. `middleware.Auth(cfg)` is applied per-route-group (see `user.Routes`), not globally — validates
+custom claim. `/users/register` and `/users/login` are rate limited per client IP (`middleware.RateLimit`, 10/min,
+burst 10), all `/users` routes cap bodies at 16 KiB and send `Cache-Control: no-store`, and requests are validated
+in `user/model.go` (emails trimmed and lowercased, password 8–72 bytes). `middleware.Auth(cfg)` is applied per-route-group (see `user.Routes`), not globally — validates
 the bearer token and injects the user ID/role into the request context, readable via `middleware.UserID(ctx)` /
 `middleware.UserRole(ctx)`.
 
@@ -103,8 +105,9 @@ call chain rather than accessed as a global.
   default, at `LOG_LEVEL` (default info). That also routes the stdlib `log` package through it. Its handler adds
   `request_id` (chi) and `trace_id`/`span_id` (OTel span in the context) to any record logged with a context, so
   use `slog.InfoContext(r.Context(), ...)` in request code. `logging.Fatal` replaces `log.Fatal`.
-- `middleware.Logging` = chi `RequestID` + `RealIP` + one `"msg":"request"` access line per request (route is the
-  chi pattern); it also sets `X-Request-Id`. `middleware.Recoverer` replaces chi's, logging the panic as one JSON line.
+- `middleware.Logging` = chi `RequestID` + `realIP` + one `"msg":"request"` access line per request (route is the
+  chi pattern); it also sets `X-Request-Id`. `realIP` trusts only `CF-Connecting-IP` (Cloudflare overwrites it), never
+  `X-Forwarded-For`/`X-Real-IP`/`True-Client-IP`, which clients can forge; don't swap in chi's `RealIP`. `middleware.Recoverer` replaces chi's, logging the panic as one JSON line.
 - `internal/telemetry.NewMetrics(service)` builds the OTel meter provider with the Prometheus exporter (its own
   registry plus Go/process collectors). `Serve(ctx, addr)` exposes `/metrics` on a separate listener (`METRICS_ADDRESS`
   for the API, `-metrics-address`/`COLLECTOR_METRICS_ADDRESS` for the collector; empty disables; `:9464` in Compose).
@@ -167,7 +170,7 @@ then syncs the stored articles into Mongo's `news` collection, which the API ser
   one collection per invocation (EventBridge Scheduler) in Mongo-only mode: no file store, `news.Service.Ingest`
   inserts articles whose `_id` and `title_key` aren't stored yet (never overwriting, so `fetched_at` stays first-seen)
   and deletes expired ones. The URI comes from `MONGO_URI` or the SSM SecureString named by `MONGO_URI_PARAMETER`.
-  Build with `devops/terraform/build.sh`. `aws-lambda-go` is pinned to v1.54.0 (v1.55+ needs Go 1.26).
+  Build with `devops/terraform/build.sh`. `aws-lambda-go` is at v1.54.0 (v1.55+ needs Go 1.26, which go.mod now requires).
 - To show the Lambda's data, the Compose backend reads `${MONGO_URI}` (the `MONGO_URI` GitHub secret in the deploy
   job; unset falls back to the local `mongo`). The Compose collector always syncs to the local `mongo`, so its
   upserting `Import` never shares a collection with the Lambda's `Ingest`.

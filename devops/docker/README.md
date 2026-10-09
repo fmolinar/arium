@@ -34,15 +34,15 @@ flowchart LR
 | Service | Image (Dockerfile) | Ports (host → container) | Storage | Restart |
 |---|---|---|---|---|
 | `app` | `arium-react` ([`Dockerfile`](Dockerfile)) | 3000 → 4173 | – | unless-stopped |
-| `backend` | `arium-backend` ([`Dockerfile.backend`](Dockerfile.backend)) | 8080 → 8080 | – | unless-stopped |
-| `mongo` | `mongo:latest` | 27017 → 27017 | `mongo_data` → `/data/db` | unless-stopped |
+| `backend` | `arium-backend` ([`Dockerfile.backend`](Dockerfile.backend)) | 127.0.0.1:8080 → 8080 | – | unless-stopped |
+| `mongo` | `mongo:latest` | 127.0.0.1:27017 → 27017 | `mongo_data` → `/data/db` | unless-stopped |
 | `collector` | `arium-collector` ([`Dockerfile.collector`](Dockerfile.collector)) | none | `collector_data` → `/data` | unless-stopped |
 | `prometheus` | `prom/prometheus:v3.15.0` | 127.0.0.1:9090 → 9090 | `prometheus_data` → `/prometheus` | unless-stopped |
 | `grafana` | `grafana/grafana:13.2.3` | 127.0.0.1:3001 → 3000 | `grafana_data` → `/var/lib/grafana` | unless-stopped |
 
 The browser calls the API at relative `/api` URLs on port 3000, and `vite preview` in the `app` container
 proxies them to `backend` (`API_PROXY_TARGET=http://backend:8080`), so those requests are same-origin. The API's
-port 8080 is still published for direct calls, and its CORS policy allows `FRONTEND_URL` (`http://localhost:3000`). The collector fetches
+port 8080 is published on 127.0.0.1 only, for direct local calls, and its CORS policy allows `FRONTEND_URL` (`http://localhost:3000`). The collector fetches
 sources over HTTPS and, after each run, syncs articles into Mongo's `news` collection over `arium_network`. Its healthcheck runs `collector -healthcheck` every minute
 and marks the container unhealthy once a scheduled run is more than 10 minutes overdue.
 
@@ -55,8 +55,8 @@ are mounted read-only from [`devops/observability`](../observability). Both publ
 | Dockerfile | Build | Runtime |
 |---|---|---|
 | `Dockerfile` | `node:22-alpine`: `npm ci`, `npm run build` | same image, serves `dist/` with `vite preview --host 0.0.0.0` |
-| `Dockerfile.backend` | `golang:1.25-alpine`: static `CGO_ENABLED=0` binary | `alpine:3.22`, CA certificates, non-root `app` user |
-| `Dockerfile.collector` | `golang:1.25-alpine`: static binary with embedded tzdata | `alpine:3.22`, CA certificates, non-root `app` user, `/data` pre-created and owned by `app` so a fresh volume is writable |
+| `Dockerfile.backend` | `golang:1.27-alpine`: static `CGO_ENABLED=0` binary | `alpine:3.22`, CA certificates, non-root `app` user |
+| `Dockerfile.collector` | `golang:1.27-alpine`: static binary with embedded tzdata | `alpine:3.22`, CA certificates, non-root `app` user, `/data` pre-created and owned by `app` so a fresh volume is writable |
 
 All builds use the repository root as the build context. `.dockerignore` keeps out `node_modules`, build output,
 `.env` files and local collector data.
@@ -113,7 +113,7 @@ collector volume appears as `docker_collector_data`.
 
 - Grafana's admin password defaults to `admin`. Grafana and Prometheus listen only on 127.0.0.1, but set
   `GRAFANA_ADMIN_PASSWORD` anyway if the host is shared.
-- MongoDB is published on host port 27017 with no authentication. That's fine for a local machine, but don't
-  expose it beyond that.
+- MongoDB has no authentication, so it's published on 127.0.0.1:27017 only, like the API on 127.0.0.1:8080. Only the
+  app's port 3000 listens on all interfaces, for the Cloudflare Tunnel connector to reach through `host.docker.internal`.
 - `depends_on: mongo` only orders startup; mongo and backend have no healthcheck. The backend can start before MongoDB accepts
   connections, and `restart: unless-stopped` retries it.
