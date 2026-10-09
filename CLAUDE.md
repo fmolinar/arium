@@ -168,6 +168,9 @@ then syncs the stored articles into Mongo's `news` collection, which the API ser
   inserts articles whose `_id` and `title_key` aren't stored yet (never overwriting, so `fetched_at` stays first-seen)
   and deletes expired ones. The URI comes from `MONGO_URI` or the SSM SecureString named by `MONGO_URI_PARAMETER`.
   Build with `devops/terraform/build.sh`. `aws-lambda-go` is pinned to v1.54.0 (v1.55+ needs Go 1.26).
+- To show the Lambda's data, the Compose backend reads `${MONGO_URI}` (the `MONGO_URI` GitHub secret in the deploy
+  job; unset falls back to the local `mongo`). The Compose collector always syncs to the local `mongo`, so its
+  upserting `Import` never shares a collection with the Lambda's `Ingest`.
 - Collector tests never touch the network: they use `httptest.Server` with `testdata/` fixtures, and `t.TempDir()`
   for storage.
 

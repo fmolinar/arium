@@ -73,6 +73,18 @@ A successful run logs a line like:
 return an error, which shows up in the function's `Errors` metric. Failed scheduled runs aren't retried. Runs
 are idempotent, so the next one catches up.
 
+## Showing the Atlas data in the frontend
+
+The Lambda only writes. The frontend reads news through the API (`GET /api/v1/news`), so point the Compose
+backend at the same cluster by setting `MONGO_URI` to the same connection string: in `devops/docker/.env` for a
+manual `docker compose up`, or as the `MONGO_URI` GitHub secret for the deploy workflow. Unset, the backend keeps
+using the local `mongo` service. The backend also stores users there, and it creates its indexes on startup, so
+its database user needs `readWrite` on `arium` too, and Atlas Network Access must allow the Docker host's IP
+(`0.0.0.0/0` already covers it).
+
+The Compose `collector` keeps syncing to the local `mongo` either way. With the backend on Atlas, the Lambda is
+the only thing writing news there.
+
 ## Testing locally without AWS
 
 AWS's Runtime Interface Emulator runs the same handler against a local Mongo:
