@@ -13,7 +13,8 @@ concurrency:
 
 jobs:
   test:
-    runs-on: [self-hosted]
+    # Same machine as deploy: the Mac that serves the site.
+    runs-on: [self-hosted, mac-server]
     defaults:
       run:
         working-directory: ./backend
@@ -56,7 +57,8 @@ jobs:
 
   deploy:
     needs: test
-    runs-on: [self-hosted]
+    # The Mac that serves the site through the Cloudflare Tunnel.
+    runs-on: [self-hosted, mac-server]
     defaults:
       run:
         working-directory: ./devops/docker
@@ -66,6 +68,11 @@ jobs:
       # Atlas connection string for the backend. Empty (secret unset) falls
       # back to the local mongo service.
       MONGO_URI: ${{ secrets.MONGO_URI }}
+      # Public domain through the cloudflared service (see devops/docker/.env.example).
+      COMPOSE_PROFILES: tunnel
+      CLOUDFLARE_TUNNEL_TOKEN: ${{ secrets.CLOUDFLARE_TUNNEL_TOKEN }}
+      PUBLIC_HOSTNAME: ${{ vars.PUBLIC_HOSTNAME }}
+      FRONTEND_URL: https://${{ vars.PUBLIC_HOSTNAME }}
 
     steps:
       - name: Check out merged code
@@ -93,7 +100,7 @@ jobs:
       - name: Display deployment status
         run: |
           docker compose ps
-          docker compose logs --tail=50 app collector prometheus grafana
+          docker compose logs --tail=50 app collector prometheus grafana cloudflared
 
       - name: Remove unused images
         run: docker image prune -f

@@ -21,6 +21,9 @@ services:
     # vite preview proxies /api to the backend (see arium/vite.config.js).
     environment:
       - API_PROXY_TARGET=http://backend:8080
+      # Public hostname(s) vite preview should answer, e.g. the domain the
+      # cloudflared service forwards here. Empty: localhost only.
+      - ALLOWED_HOSTS=${PUBLIC_HOSTNAME:-}
     depends_on:
       - backend
 
@@ -39,7 +42,7 @@ services:
       - mongo
     environment:
       - ADDRESS=:8080
-      - FRONTEND_URL=http://localhost:3000
+      - FRONTEND_URL=${FRONTEND_URL:-http://localhost:3000}
       # Where the API (and so the frontend) reads news and users from. Set
       # MONGO_URI to the Atlas connection string to serve what the Lambda
       # collector (devops/terraform) writes; unset, it's the local mongo service.
@@ -95,6 +98,23 @@ services:
       timeout: 10s
       start_period: 30s
       retries: 3
+
+  # Cloudflare Tunnel: serves the app on your domain from this machine, with no
+  # open ports or public IP. Only runs with the "tunnel" profile (set
+  # COMPOSE_PROFILES=tunnel in .env). The tunnel and its public hostname
+  # (pointing at http://app:4173) are managed in the Cloudflare dashboard.
+  cloudflared:
+    networks:
+      - arium_network
+    image: cloudflare/cloudflared:2026.9.3
+    container_name: arium-cloudflared
+    restart: unless-stopped
+    profiles: [tunnel]
+    command: tunnel --no-autoupdate run
+    environment:
+      - TUNNEL_TOKEN=${CLOUDFLARE_TUNNEL_TOKEN:-}
+    depends_on:
+      - app
 
   mongo:
     networks:
