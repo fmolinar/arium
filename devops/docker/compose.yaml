@@ -103,6 +103,9 @@ services:
   # open ports or public IP. Only runs with the "tunnel" profile (set
   # COMPOSE_PROFILES=tunnel in .env). The tunnel and its public hostname
   # (pointing at http://app:4173) are managed in the Cloudflare dashboard.
+  # Give it a tunnel of its own: connectors sharing a token are replicas, so
+  # this one would also get another project's traffic and fail it. If the
+  # machine already runs a tunnel, route the hostname there to port 3000.
   cloudflared:
     networks:
       - arium_network
