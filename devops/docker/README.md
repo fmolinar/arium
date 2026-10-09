@@ -68,6 +68,8 @@ Compose reads `devops/docker/.env`, which is gitignored. Copy [`.env.example`](.
 | Variable | Used by | Default | |
 |---|---|---|---|
 | `JWT_SECRET` | backend | **required**: compose won't start without it | `openssl rand -base64 32` |
+| `MONGO_URI` | backend | `mongodb://mongo:27017/arium` | Set to the Atlas connection string to serve what the Lambda collector writes. The `collector` service always syncs to the local `mongo` |
+| `MONGO_DB` | backend | `arium` | Database name |
 | `COLLECTOR_SCHEDULE` | collector | `00:00,08:00,16:00` | Daily run times |
 | `COLLECTOR_TIMEZONE` | collector | `UTC` | e.g. `America/Los_Angeles` |
 | `COLLECTOR_RUN_ON_START` | collector | `true` | Also collect once when the container starts |
@@ -78,7 +80,8 @@ Compose reads `devops/docker/.env`, which is gitignored. Copy [`.env.example`](.
 | `GRAFANA_ADMIN_PASSWORD` | grafana | `admin` | Password for the `admin` user. Applied when `grafana_data` is first created |
 | `PROMETHEUS_RETENTION` | prometheus | `15d` | How long Prometheus keeps metrics |
 
-The backend's `MONGO_URI`, `MONGO_DB`, `ADDRESS` and `FRONTEND_URL` are set in `compose.yaml` itself.
+The backend's `ADDRESS` and `FRONTEND_URL` are set in `compose.yaml` itself. In CI the deploy job takes `JWT_SECRET`
+and `MONGO_URI` from the GitHub secrets of the same names.
 
 ## Commands
 

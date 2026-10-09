@@ -40,8 +40,11 @@ services:
     environment:
       - ADDRESS=:8080
       - FRONTEND_URL=http://localhost:3000
-      - MONGO_URI=mongodb://mongo:27017/arium
-      - MONGO_DB=arium
+      # Where the API (and so the frontend) reads news and users from. Set
+      # MONGO_URI to the Atlas connection string to serve what the Lambda
+      # collector (devops/terraform) writes; unset, it's the local mongo service.
+      - MONGO_URI=${MONGO_URI:-mongodb://mongo:27017/arium}
+      - MONGO_DB=${MONGO_DB:-arium}
       - JWT_SECRET=${JWT_SECRET:?JWT_SECRET must be set (see devops/docker/.env.example)}
       - LOG_LEVEL=${LOG_LEVEL:-info}
       # Prometheus metrics at /metrics, reachable only on the compose network.
@@ -68,6 +71,9 @@ services:
     environment:
       - COLLECTOR_OUT_DIR=/data
       # After each run, sync the stored articles into Mongo for GET /api/v1/news.
+      # Always the local mongo service, even when the backend uses Atlas: this
+      # sync re-imports and overwrites articles, while the Lambda collector
+      # writes to Atlas insert-only, and the two shouldn't share a collection.
       - MONGO_URI=mongodb://mongo:27017/arium
       - MONGO_DB=arium
       - COLLECTOR_SCHEDULE=${COLLECTOR_SCHEDULE:-00:00,08:00,16:00}

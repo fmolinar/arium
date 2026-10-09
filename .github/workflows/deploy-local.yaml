@@ -63,6 +63,9 @@ jobs:
     timeout-minutes: 15
     env:
       JWT_SECRET: ${{ secrets.JWT_SECRET }}
+      # Atlas connection string for the backend. Empty (secret unset) falls
+      # back to the local mongo service.
+      MONGO_URI: ${{ secrets.MONGO_URI }}
 
     steps:
       - name: Check out merged code
