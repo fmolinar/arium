@@ -187,7 +187,8 @@ since `gh pr edit` fails on a classic-Projects GraphQL error). Both jobs run on 
 with Docker Desktop), which serves the site on a public domain through the `cloudflared` Compose service (profile
 `tunnel`; secret `CLOUDFLARE_TUNNEL_TOKEN`, repo variable `PUBLIC_HOSTNAME`). `vite preview` only answers hosts in
 `ALLOWED_HOSTS`. If that runner is offline, runs sit queued, and a newer push cancels the queued one. As a launchd
-service the runner can't unlock the Keychain, so Docker's `credsStore` must be removed from `~/.docker/config.json`.
+service the runner can't unlock the Keychain, so each job first runs `.github/scripts/docker-config-no-keychain.sh`,
+which points `DOCKER_CONFIG` at a config without Docker Desktop's credential helper.
 
 ## Next steps
 

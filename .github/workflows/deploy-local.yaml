@@ -24,6 +24,9 @@ jobs:
       - name: Check out merged code
         uses: actions/checkout@v4
 
+      - name: Use a Docker config without the Keychain helper
+        run: ${{ github.workspace }}/.github/scripts/docker-config-no-keychain.sh
+
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
@@ -77,6 +80,9 @@ jobs:
     steps:
       - name: Check out merged code
         uses: actions/checkout@v4
+
+      - name: Use a Docker config without the Keychain helper
+        run: ${{ github.workspace }}/.github/scripts/docker-config-no-keychain.sh
 
       - name: Verify Docker
         run: |
