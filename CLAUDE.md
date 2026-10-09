@@ -189,7 +189,8 @@ routed to host port 3000 (repo variable `PUBLIC_HOSTNAME`). The Compose `cloudfl
 for a machine with no tunnel of its own; never give it a shared tunnel's token. `vite preview` only answers hosts in
 `ALLOWED_HOSTS`. If that runner is offline, runs sit queued, and a newer push cancels the queued one. As a launchd
 service the runner can't unlock the Keychain, so each job first runs `.github/scripts/docker-config-no-keychain.sh`,
-which points `DOCKER_CONFIG` at a config without Docker Desktop's credential helper.
+which points `DOCKER_CONFIG` at a config whose `credsStore` is a stub that never has credentials (with no
+`credsStore` at all, the macOS CLI falls back to `osxkeychain`).
 
 ## Next steps
 
