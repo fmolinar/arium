@@ -7,6 +7,14 @@ import { defineConfig } from 'vite'
 // no CORS. In Docker Compose, API_PROXY_TARGET points at the backend service.
 const apiTarget = process.env.API_PROXY_TARGET ?? 'http://localhost:8080'
 
+// Vite answers only localhost requests unless told otherwise. ALLOWED_HOSTS is a
+// comma-separated list of extra hostnames, e.g. the public domain a Cloudflare
+// Tunnel forwards to `vite preview` in Compose.
+const allowedHosts = (process.env.ALLOWED_HOSTS ?? '')
+  .split(',')
+  .map((h) => h.trim())
+  .filter(Boolean)
+
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [react(), tailwindcss()],
@@ -15,5 +23,6 @@ export default defineConfig({
   },
   preview: {
     proxy: { '/api': apiTarget },
+    allowedHosts,
   },
 })

@@ -183,8 +183,11 @@ sends Prometheus a `SIGHUP` (its config is bind-mounted, so compose doesn't recr
 
 The workflow runs only on pushes to `main`, so PRs get no CI. `main` requires a code-owner review; the owner merges
 with `gh pr merge --admin` (use `gh api -X PATCH repos/fmolinar/arium/pulls/<n> -f base=main` to retarget a PR,
-since `gh pr edit` fails on a classic-Projects GraphQL error). Both self-hosted runners (`desktop-runner`,
-`laptop-runner`) are often offline: runs then sit queued, and a newer push cancels the queued one.
+since `gh pr edit` fails on a classic-Projects GraphQL error). Both jobs run on the `mac-server` runner (a Mac
+with Docker Desktop), which serves the site on a public domain through the `cloudflared` Compose service (profile
+`tunnel`; secret `CLOUDFLARE_TUNNEL_TOKEN`, repo variable `PUBLIC_HOSTNAME`). `vite preview` only answers hosts in
+`ALLOWED_HOSTS`. If that runner is offline, runs sit queued, and a newer push cancels the queued one. As a launchd
+service the runner can't unlock the Keychain, so Docker's `credsStore` must be removed from `~/.docker/config.json`.
 
 ## Next steps
 
