@@ -84,6 +84,14 @@ Each feature (`user`, `news`) follows a fixed layering, all under `internal/<fea
 New backend features should follow this same model/repository/service/handler/routes split and be mounted from
 `server.go` the same way `user` is.
 
+### Legal pages
+
+`/terms` and `/privacy` (`arium/src/pages/Terms.jsx`, `Privacy.jsx`, shared layout `components/LegalPage.jsx`) are
+linked from the footer; the operator, contact URL and effective date live in `arium/src/legal/config.js`. The
+Privacy Policy states facts about the stack: no cookies or analytics, self-hosted fonts, `localStorage` only for
+theme/bookmarks, request logs with IP/user agent, account fields, Cloudflare and Atlas as processors, and log
+rotation (the `x-logging` anchor in `compose.yaml`). Change it, and bump `EFFECTIVE_DATE`, when any of those change.
+
 ### Auth
 
 JWT (HS256) issued by `middleware.NewToken` on login/register, carrying the user ID as `Subject` and a `Role`

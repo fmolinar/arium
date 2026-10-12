@@ -1,9 +1,21 @@
 # Docker Compose configuration for the Arium application
+
+# Cap container logs, which include the API's request logs (IP address, user
+# agent): Docker rotates each container's log at 10 MB and keeps 3 files, so
+# older entries are overwritten. The Privacy Policy (arium/src/pages/Privacy.jsx)
+# relies on this.
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 networks:
   arium_network:
     driver: bridge
 services:
   app:
+    logging: *default-logging
     networks:
       - arium_network
     build:
@@ -28,6 +40,7 @@ services:
       - backend
 
   backend:
+    logging: *default-logging
     networks:
       - arium_network
     build:
@@ -59,6 +72,7 @@ services:
   # Collect once right now, alongside the scheduler:
   #   docker compose run --rm collector -once
   collector:
+    logging: *default-logging
     networks:
       - arium_network
     build:
@@ -107,6 +121,7 @@ services:
   # this one would also get another project's traffic and fail it. If the
   # machine already runs a tunnel, route the hostname there to port 3000.
   cloudflared:
+    logging: *default-logging
     networks:
       - arium_network
     image: cloudflare/cloudflared:2026.9.3
