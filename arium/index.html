@@ -2,9 +2,34 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>arium</title>
+    <meta
+      name="description"
+      content="One feed for the news, incidents and discussions that matter to infrastructure engineers: DevOps, SRE, GitOps and DevSecOps."
+    />
+    <meta name="theme-color" content="#16171d" />
+
+    <!-- Logo: favicon.svg is the source; the PNGs and .ico are rendered from it. -->
+    <link rel="icon" href="/favicon.ico" sizes="48x48" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <link rel="manifest" href="/site.webmanifest" />
+
+    <!-- Link previews (Slack, LinkedIn, X, iMessage...). Crawlers need absolute URLs. -->
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="arium" />
+    <meta property="og:title" content="arium" />
+    <meta
+      property="og:description"
+      content="One feed for DevOps, SRE, GitOps and DevSecOps news."
+    />
+    <meta property="og:url" content="https://goarium.com/" />
+    <meta property="og:image" content="https://goarium.com/og-image.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content="arium: DevOps, SRE, GitOps and DevSecOps news" />
+    <meta name="twitter:card" content="summary_large_image" />
   </head>
   <body>
     <div id="root"></div>
