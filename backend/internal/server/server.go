@@ -47,6 +47,7 @@ func (s *Server) routes(cfg config.Config, meter metric.Meter, userHandler *user
 	router.Use(middleware.Metrics(meter))
 	router.Use(middleware.Recoverer)
 	router.Use(chimiddleware.Timeout(30 * time.Second))
+	router.Use(middleware.SecurityHeaders)
 
 	router.Use(middleware.CORS(cfg))
 
