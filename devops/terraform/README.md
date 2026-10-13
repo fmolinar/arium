@@ -34,7 +34,8 @@ expensive part (about $32 a month). `terraform destroy` removes everything this 
 
 ## Prerequisites
 
-- Terraform >= 1.6, and Go 1.25 or Docker (`build.sh` falls back to the `golang:1.25` image)
+- Terraform >= 1.6, and Go 1.26+ or Docker (`build.sh` falls back to the `golang:1.27` image; `go.mod` pins the go1.27.2 toolchain, which a
+  local Go downloads automatically)
 - AWS credentials Terraform can use, e.g. `aws configure` / `AWS_PROFILE`. The AWS CLI is optional but needed for
   `invoke_command` and log tailing.
 - An Atlas cluster. Because Lambda outside a VPC has no fixed egress IP, Atlas **Network Access** must allow

@@ -27,7 +27,7 @@ flowchart LR
 
 | | |
 |---|---|
-| Language | Go 1.25 |
+| Language | Go 1.26+ (toolchain go1.27.2) |
 | HTTP router | [chi v5](https://github.com/go-chi/chi) + [go-chi/cors](https://github.com/go-chi/cors) |
 | Database | MongoDB via [mongo-driver v2](https://github.com/mongodb/mongo-go-driver) |
 | Auth | [golang-jwt v5](https://github.com/golang-jwt/jwt) (HS256), passwords hashed with bcrypt (`golang.org/x/crypto`) |
@@ -35,7 +35,7 @@ flowchart LR
 | Logging | `log/slog`, JSON on stdout, with the request ID (and trace/span IDs once tracing lands) on each line |
 | Metrics | [OpenTelemetry](https://opentelemetry.io/docs/languages/go/) metrics SDK with the Prometheus exporter, served on a separate `/metrics` port |
 | Tests | standard `testing` + `net/http/httptest`; integration tests against a real MongoDB |
-| Container | multi-stage builds on `golang:1.25-alpine` → `alpine:3.22`, non-root user (see [`devops/docker`](../devops/docker)) |
+| Container | multi-stage builds on `golang:1.27-alpine` → `alpine:3.22`, non-root user (see [`devops/docker`](../devops/docker)) |
 
 ## Layout
 
