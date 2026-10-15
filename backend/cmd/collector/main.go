@@ -47,6 +47,7 @@ type options struct {
 	// mongoOnly stores articles in news only, deduplicating against MongoDB
 	// instead of the file store in outDir (Lambda mode).
 	mongoOnly bool
+	archive   *archive // Lambda mode: raw payloads and manifests to S3; nil when off
 	metrics   *runMetrics
 }
 
@@ -259,6 +260,16 @@ func runOnce(ctx context.Context, c *collector.Collector, opts options) error {
 
 	if opts.mongoOnly {
 		res, err := ingestNews(ctx, opts.news, result.Articles, time.Now(), opts.retention)
+
+		// The archive is a copy for reprocessing and debugging, so a failed
+		// write is logged but doesn't fail the run. It's written even when
+		// MongoDB failed, which is when the raw payloads help most.
+		if opts.archive != nil {
+			if aerr := opts.archive.save(ctx, result, res, time.Now()); aerr != nil {
+				slog.Error("archive to S3", "bucket", opts.archive.bucket, "error", aerr)
+			}
+		}
+
 		if err != nil {
 			return fmt.Errorf("store in MongoDB: %w", err)
 		}
