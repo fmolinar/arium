@@ -1,14 +1,22 @@
 # The news collector on AWS Lambda: an EventBridge Scheduler schedule invokes
 # the function three times a day, and it writes articles straight to MongoDB
-# (Atlas). The function runs outside a VPC so it needs no NAT gateway, which
-# keeps the stack within the free tier.
+# (Atlas), and copies each run's raw payloads and manifest to S3. The function
+# runs outside a VPC so it needs no NAT gateway, which keeps the stack within
+# the free tier.
+#
+# The bootstrap stack (bootstrap/) owns what has to outlive a destroy: the
+# state bucket, the archive bucket, and the permissions boundary every role
+# here must carry. Names are derived from the same prefix on both sides.
+
+data "aws_caller_identity" "current" {}
 
 locals {
   name           = "${var.project}-collector"
   mongo_uri_path = "/${var.project}/collector/mongo-uri"
+  account_id     = data.aws_caller_identity.current.account_id
+  archive_bucket = "${local.name}-archive-${local.account_id}"
+  boundary_arn   = "arn:aws:iam::${local.account_id}:policy/${local.name}-boundary"
 }
-
-data "aws_caller_identity" "current" {}
 
 # The connection string lives in SSM rather than in the function's
 # environment, where anyone who can read the function config would see it.
@@ -37,8 +45,9 @@ data "aws_iam_policy_document" "lambda_assume" {
 }
 
 resource "aws_iam_role" "collector" {
-  name               = "${local.name}-lambda"
-  assume_role_policy = data.aws_iam_policy_document.lambda_assume.json
+  name                 = "${local.name}-lambda"
+  assume_role_policy   = data.aws_iam_policy_document.lambda_assume.json
+  permissions_boundary = local.boundary_arn
 }
 
 data "aws_iam_policy_document" "collector" {
@@ -54,6 +63,18 @@ data "aws_iam_policy_document" "collector" {
     sid       = "ReadMongoURI"
     actions   = ["ssm:GetParameter"]
     resources = [aws_ssm_parameter.mongo_uri.arn]
+  }
+
+  dynamic "statement" {
+    for_each = var.archive_enabled ? [1] : []
+    content {
+      sid     = "Archive"
+      actions = ["s3:PutObject"]
+      resources = [
+        "arn:aws:s3:::${local.archive_bucket}/raw/*",
+        "arn:aws:s3:::${local.archive_bucket}/runs/*",
+      ]
+    }
   }
 }
 
@@ -94,6 +115,7 @@ resource "aws_lambda_function" "collector" {
       COLLECTOR_SINCE          = var.collector_since
       COLLECTOR_RETENTION      = var.collector_retention
       COLLECTOR_SOURCE_TIMEOUT = var.collector_source_timeout
+      COLLECTOR_ARCHIVE_BUCKET = var.archive_enabled ? local.archive_bucket : ""
     }
   }
 
@@ -130,8 +152,9 @@ data "aws_iam_policy_document" "scheduler_assume" {
 }
 
 resource "aws_iam_role" "scheduler" {
-  name               = "${local.name}-scheduler"
-  assume_role_policy = data.aws_iam_policy_document.scheduler_assume.json
+  name                 = "${local.name}-scheduler"
+  assume_role_policy   = data.aws_iam_policy_document.scheduler_assume.json
+  permissions_boundary = local.boundary_arn
 }
 
 data "aws_iam_policy_document" "scheduler" {
