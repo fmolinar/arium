@@ -1,7 +1,7 @@
 variable "aws_region" {
-  description = "AWS region. Pick the one closest to the MongoDB Atlas cluster."
+  description = "AWS region. Pick the one closest to the MongoDB Atlas cluster, and the same as the bootstrap stack's."
   type        = string
-  default     = "us-east-1"
+  default     = "us-west-2"
 }
 
 variable "project" {
@@ -74,6 +74,12 @@ variable "log_retention_days" {
   description = "CloudWatch Logs retention for the function's log group."
   type        = number
   default     = 14
+}
+
+variable "archive_enabled" {
+  description = "Copy each run's raw payloads and manifest to the archive bucket the bootstrap stack creates."
+  type        = bool
+  default     = true
 }
 
 variable "lambda_binary" {

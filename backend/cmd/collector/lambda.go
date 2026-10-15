@@ -10,6 +10,7 @@ import (
 	"github.com/aws/aws-lambda-go/lambda"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/ssm"
 	"go.mongodb.org/mongo-driver/v2/mongo"
 	mongooptions "go.mongodb.org/mongo-driver/v2/mongo/options"
@@ -33,18 +34,30 @@ func lambdaRuntime() bool {
 //
 // The connection string comes from mongoURI (env MONGO_URI) or, when that's
 // empty, from the SSM SecureString named by MONGO_URI_PARAMETER, so it
-// isn't visible in the function's configuration.
+// isn't visible in the function's configuration. With
+// COLLECTOR_ARCHIVE_BUCKET set, each run's raw payloads and manifest are also
+// copied to that S3 bucket (see archive).
 func startLambda(ctx context.Context, c *collector.Collector, opts options, mongoURI, mongoDB string) error {
+	// Credentials come from the function's role; loading the config makes no
+	// network calls.
+	cfg, err := awsconfig.LoadDefaultConfig(ctx)
+	if err != nil {
+		return fmt.Errorf("aws config: %w", err)
+	}
+
 	if mongoURI == "" {
 		name := os.Getenv("MONGO_URI_PARAMETER")
 		if name == "" {
 			return errors.New("set MONGO_URI or MONGO_URI_PARAMETER")
 		}
 
-		var err error
-		if mongoURI, err = ssmParameter(ctx, name); err != nil {
+		if mongoURI, err = ssmParameter(ctx, cfg, name); err != nil {
 			return err
 		}
+	}
+
+	if bucket := os.Getenv("COLLECTOR_ARCHIVE_BUCKET"); bucket != "" {
+		opts.archive = &archive{bucket: bucket, client: s3.NewFromConfig(cfg)}
 	}
 
 	client, err := mongo.Connect(mongooptions.Client().ApplyURI(mongoURI).SetServerSelectionTimeout(10 * time.Second))
@@ -75,12 +88,7 @@ func startLambda(ctx context.Context, c *collector.Collector, opts options, mong
 }
 
 // ssmParameter returns the decrypted value of an SSM parameter.
-func ssmParameter(ctx context.Context, name string) (string, error) {
-	cfg, err := awsconfig.LoadDefaultConfig(ctx)
-	if err != nil {
-		return "", fmt.Errorf("aws config: %w", err)
-	}
-
+func ssmParameter(ctx context.Context, cfg aws.Config, name string) (string, error) {
 	out, err := ssm.NewFromConfig(cfg).GetParameter(ctx, &ssm.GetParameterInput{
 		Name:           &name,
 		WithDecryption: aws.Bool(true),

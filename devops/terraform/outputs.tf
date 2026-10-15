@@ -2,6 +2,10 @@ output "function_name" {
   value = aws_lambda_function.collector.function_name
 }
 
+output "archive_bucket" {
+  value = var.archive_enabled ? local.archive_bucket : null
+}
+
 output "log_group" {
   value = aws_cloudwatch_log_group.collector.name
 }
