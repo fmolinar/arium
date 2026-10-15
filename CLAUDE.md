@@ -179,6 +179,14 @@ then syncs the stored articles into Mongo's `news` collection, which the API ser
   inserts articles whose `_id` and `title_key` aren't stored yet (never overwriting, so `fetched_at` stays first-seen)
   and deletes expired ones. The URI comes from `MONGO_URI` or the SSM SecureString named by `MONGO_URI_PARAMETER`.
   Build with `devops/terraform/build.sh`. `aws-lambda-go` is at v1.54.0 (v1.55+ needs Go 1.26, which go.mod now requires).
+- With `COLLECTOR_ARCHIVE_BUCKET` set, the Lambda also copies each run's raw payloads and manifest to S3
+  (`cmd/collector/archive.go`) under the file store's keys (`collector.RawKey`/`ManifestKey`). It's best-effort: a
+  failed write is logged, never fails the run, and happens even when the Mongo insert failed.
+- Terraform: `devops/terraform/bootstrap/` (applied once by hand, local state) owns the state bucket
+  (`arium-tfstate-<account>`), the archive bucket, the `arium-collector-boundary` permissions boundary and the
+  GitHub OIDC role's inline policy. The collector stack (`devops/terraform/`) keeps state in that bucket
+  (`-backend-config=bucket=...`, `use_lockfile`) and derives the bucket and boundary names from the same prefix.
+  Every IAM role it creates must carry the boundary, or CI can't create it.
 - To show the Lambda's data, the Compose backend reads `${MONGO_URI}` (the `MONGO_URI` GitHub secret in the deploy
   job; unset falls back to the local `mongo`). The Compose collector always syncs to the local `mongo`, so its
   upserting `Import` never shares a collection with the Lambda's `Ingest`.
@@ -186,6 +194,11 @@ then syncs the stored articles into Mongo's `news` collection, which the API ser
   for storage.
 
 ### CI/CD
+
+`.github/workflows/collector.yaml` is manual (`workflow_dispatch`: plan, apply or destroy of `devops/terraform`) on
+GitHub-hosted runners, in the `aws` environment, with AWS credentials from OIDC (`vars.AWS_ROLE_ARN`,
+`vars.AWS_REGION`, `vars.TF_STATE_BUCKET`, `secrets.TF_VAR_MONGO_URI`). After an apply it invokes the function once
+and fails if that run fails.
 
 `.github/workflows/deploy-local.yaml` runs on push to `main` (self-hosted runner): `test` job spins up Mongo,
 runs `gofmt`, `go vet`, `go build`, unit tests, and integration tests against it; `deploy` job (gated on `test`

@@ -1,0 +1,119 @@
+# Plans, applies or destroys the news collector on AWS Lambda
+# (devops/terraform), on demand. It runs on GitHub-hosted runners, since it
+# doesn't touch the Compose host, and gets AWS credentials through OIDC: the
+# role (vars.AWS_ROLE_ARN) trusts only jobs in the "aws" environment, and its
+# permissions come from devops/terraform/bootstrap. See devops/terraform/README.md.
+name: Collector on AWS
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: Terraform action
+        type: choice
+        options: [plan, apply, destroy]
+        default: plan
+
+permissions:
+  contents: read
+  id-token: write # for the OIDC token exchanged for AWS credentials
+
+# One Terraform run at a time; the S3 lockfile would refuse a second anyway.
+concurrency:
+  group: collector-terraform
+  cancel-in-progress: false
+
+jobs:
+  terraform:
+    name: terraform ${{ inputs.action }}
+    runs-on: ubuntu-latest
+    environment: aws
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: ./devops/terraform
+    env:
+      TF_IN_AUTOMATION: "true"
+      TF_INPUT: "false"
+      TF_VAR_aws_region: ${{ vars.AWS_REGION }}
+      TF_VAR_mongo_uri: ${{ secrets.TF_VAR_MONGO_URI }}
+      TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
+
+    steps:
+      - name: Check settings
+        run: |
+          missing=""
+          [ -n "${{ vars.AWS_ROLE_ARN }}" ] || missing="$missing AWS_ROLE_ARN(variable)"
+          [ -n "$TF_VAR_aws_region" ] || missing="$missing AWS_REGION(variable)"
+          [ -n "$TF_STATE_BUCKET" ] || missing="$missing TF_STATE_BUCKET(variable)"
+          [ -n "$TF_VAR_mongo_uri" ] || missing="$missing TF_VAR_MONGO_URI(secret)"
+          if [ -n "$missing" ]; then
+            echo "::error::Missing repository settings:$missing. See devops/terraform/README.md."
+            exit 1
+          fi
+        working-directory: .
+
+      - name: Check out code
+        uses: actions/checkout@v4
+
+      # Destroy needs the binary too: the zip is a data source, read at plan.
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+
+      - name: Build the Lambda binary
+        run: ./build.sh
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: latest
+          terraform_wrapper: false
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: terraform init
+        run: terraform init -backend-config="bucket=$TF_STATE_BUCKET" -backend-config="region=$TF_VAR_aws_region"
+
+      - name: terraform fmt and validate
+        run: |
+          terraform fmt -check -recursive
+          terraform validate
+
+      - name: terraform plan
+        run: |
+          if [ "${{ inputs.action }}" = destroy ]; then
+            terraform plan -destroy -out=tfplan
+          else
+            terraform plan -out=tfplan
+          fi
+          {
+            echo '### terraform ${{ inputs.action }}: plan'
+            echo '```'
+            terraform show -no-color tfplan | tail -n 60
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: terraform apply
+        if: inputs.action != 'plan'
+        run: terraform apply tfplan
+
+      # Post-deploy check: one collector run must succeed. A run takes a few
+      # seconds; the function's timeout is 2 minutes.
+      - name: Invoke the collector once
+        if: inputs.action == 'apply'
+        run: |
+          fn="$(terraform output -raw function_name)"
+          aws lambda invoke --function-name "$fn" --log-type Tail --cli-read-timeout 180 \
+            response.json > invoke.json
+          jq -r .LogResult invoke.json | base64 -d
+          if jq -e .FunctionError invoke.json > /dev/null; then
+            echo "::error::$fn failed: $(cat response.json)"
+            exit 1
+          fi
