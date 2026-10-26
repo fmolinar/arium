@@ -5,10 +5,12 @@ package hackernews
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/fmolinar/arium/backend/internal/collector"
@@ -21,6 +23,11 @@ const (
 	defaultBaseURL   = "https://hn.algolia.com/api/v1"
 	defaultMinPoints = 20
 	defaultHits      = 30
+
+	// maxConcurrent bounds the queries in flight at once. Sequential queries
+	// didn't fit in the per-source timeout from Lambda, where each Algolia
+	// round trip is much slower than from a desktop.
+	maxConcurrent = 4
 )
 
 // Query is one keyword search. Tags are applied to every story it returns,
@@ -90,31 +97,57 @@ type hit struct {
 	StoryText   string `json:"story_text"`
 }
 
-// Fetch runs the queries in order. Any failed query fails the whole source so
-// the manifest shows it; the stored raw payload maps each query to its
-// response body. A story matched by several queries is returned once, with
-// the tags of all of them.
+// Fetch runs the queries concurrently, at most maxConcurrent at a time. Any
+// failed query fails the whole source so the manifest shows it; the stored
+// raw payload maps each query to its response body. A story matched by
+// several queries is returned once, with the tags of all of them, and the
+// merge follows query order so the result doesn't depend on timing.
 func (s *Source) Fetch(ctx context.Context) (collector.Raw, []collector.Article, error) {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	bodies := make([]json.RawMessage, len(s.cfg.Queries))
+	hits := make([][]hit, len(s.cfg.Queries))
+	errs := make([]error, len(s.cfg.Queries))
+
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, maxConcurrent)
+	for i, q := range s.cfg.Queries {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+
+			if bodies[i], hits[i], errs[i] = s.search(ctx, q.Query); errs[i] != nil {
+				cancel() // the source fails anyway, so stop the other queries
+			}
+		}()
+	}
+	wg.Wait()
+
+	// Report the first query that failed on its own, not one canceled
+	// because of it.
+	var firstErr error
+	for _, err := range errs {
+		if err != nil && (firstErr == nil || errors.Is(firstErr, context.Canceled) && !errors.Is(err, context.Canceled)) {
+			firstErr = err
+		}
+	}
+	if firstErr != nil {
+		return collector.Raw{}, nil, firstErr
+	}
+
 	responses := make(map[string]json.RawMessage, len(s.cfg.Queries))
 	var articles []collector.Article
 	index := map[string]int{} // objectID → position in articles
 
-	for _, q := range s.cfg.Queries {
-		body, err := collector.HTTPGet(ctx, s.client, s.searchURL(q.Query), "application/json")
-		if err != nil {
-			return collector.Raw{}, nil, fmt.Errorf("query %q: %w", q.Query, err)
-		}
+	for i, q := range s.cfg.Queries {
+		responses[q.Query] = bodies[i]
 
-		var resp searchResponse
-		if err := json.Unmarshal(body, &resp); err != nil {
-			return collector.Raw{}, nil, fmt.Errorf("query %q: decode response: %w", q.Query, err)
-		}
-
-		responses[q.Query] = body
-
-		for _, h := range resp.Hits {
-			if i, ok := index[h.ObjectID]; ok {
-				articles[i].Tags = append(articles[i].Tags, q.Tags...)
+		for _, h := range hits[i] {
+			if j, ok := index[h.ObjectID]; ok {
+				articles[j].Tags = append(articles[j].Tags, q.Tags...)
 				continue
 			}
 
@@ -129,6 +162,21 @@ func (s *Source) Fetch(ctx context.Context) (collector.Raw, []collector.Article,
 	}
 
 	return collector.Raw{Data: raw, Ext: "json"}, articles, nil
+}
+
+// search runs one query and returns the response body and its hits.
+func (s *Source) search(ctx context.Context, query string) (json.RawMessage, []hit, error) {
+	body, err := collector.HTTPGet(ctx, s.client, s.searchURL(query), "application/json")
+	if err != nil {
+		return nil, nil, fmt.Errorf("query %q: %w", query, err)
+	}
+
+	var resp searchResponse
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return nil, nil, fmt.Errorf("query %q: decode response: %w", query, err)
+	}
+
+	return body, resp.Hits, nil
 }
 
 func (s *Source) searchURL(query string) string {

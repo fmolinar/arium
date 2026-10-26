@@ -188,3 +188,41 @@ func TestFetchRejectsInvalidJSON(t *testing.T) {
 		t.Error("Fetch succeeded on a non-JSON body")
 	}
 }
+
+func TestFetchRunsQueriesConcurrently(t *testing.T) {
+	var mu sync.Mutex
+	inFlight, peak := 0, 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		inFlight++
+		peak = max(peak, inFlight)
+		mu.Unlock()
+
+		time.Sleep(50 * time.Millisecond)
+
+		mu.Lock()
+		inFlight--
+		mu.Unlock()
+		_, _ = w.Write([]byte(`{"hits":[]}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	var queries []Query
+	for _, q := range []string{"a", "b", "c", "d", "e", "f", "g", "h", "i", "j"} {
+		queries = append(queries, Query{Query: q})
+	}
+	src := New(Config{Queries: queries, BaseURL: srv.URL}, srv.Client())
+
+	raw, _, err := src.Fetch(context.Background())
+	if err != nil {
+		t.Fatalf("Fetch: %v", err)
+	}
+
+	var responses map[string]json.RawMessage
+	if err := json.Unmarshal(raw.Data, &responses); err != nil || len(responses) != len(queries) {
+		t.Errorf("raw payload has %d responses (err %v), want %d", len(responses), err, len(queries))
+	}
+	if peak < 2 || peak > maxConcurrent {
+		t.Errorf("peak concurrent queries = %d, want 2..%d", peak, maxConcurrent)
+	}
+}

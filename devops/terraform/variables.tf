@@ -81,3 +81,33 @@ variable "lambda_binary" {
   type        = string
   default     = "build/bootstrap"
 }
+
+variable "alarm_email" {
+  description = "Email address for collector alarms. Empty creates the SNS topic without a subscription. AWS emails a confirmation link that must be clicked before alerts arrive."
+  type        = string
+  default     = ""
+}
+
+variable "run_interval_seconds" {
+  description = "Time between scheduled runs; the alarm period, so each period holds one run. Keep in step with schedule_expression."
+  type        = number
+  default     = 28800
+}
+
+variable "source_failure_runs" {
+  description = "Consecutive runs in which some source must fail before the source alarm fires."
+  type        = number
+  default     = 3
+}
+
+variable "permissions_boundary_arn" {
+  description = "IAM permissions boundary for the function and scheduler roles. The policy is created outside this stack (the bootstrap stack). Null for none."
+  type        = string
+  default     = null
+}
+
+variable "archive_bucket" {
+  description = "S3 bucket (created outside this stack) the collector writes run manifests and raw payloads to, as COLLECTOR_ARCHIVE_BUCKET. Empty disables archiving."
+  type        = string
+  default     = ""
+}

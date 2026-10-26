@@ -4,3 +4,6 @@
 
 aws_region = "us-east-1"
 # schedule_enabled = false
+# alarm_email      = "you@example.com"
+# permissions_boundary_arn = "arn:aws:iam::<account>:policy/arium-collector-boundary"
+# archive_bucket           = "arium-collector-archive-<account>"

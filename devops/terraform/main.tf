@@ -37,8 +37,9 @@ data "aws_iam_policy_document" "lambda_assume" {
 }
 
 resource "aws_iam_role" "collector" {
-  name               = "${local.name}-lambda"
-  assume_role_policy = data.aws_iam_policy_document.lambda_assume.json
+  name                 = "${local.name}-lambda"
+  assume_role_policy   = data.aws_iam_policy_document.lambda_assume.json
+  permissions_boundary = var.permissions_boundary_arn
 }
 
 data "aws_iam_policy_document" "collector" {
@@ -54,6 +55,16 @@ data "aws_iam_policy_document" "collector" {
     sid       = "ReadMongoURI"
     actions   = ["ssm:GetParameter"]
     resources = [aws_ssm_parameter.mongo_uri.arn]
+  }
+
+  # Run manifests and raw payloads, which the Lambda otherwise doesn't keep.
+  dynamic "statement" {
+    for_each = var.archive_bucket == "" ? [] : [var.archive_bucket]
+    content {
+      sid       = "Archive"
+      actions   = ["s3:PutObject"]
+      resources = ["arn:aws:s3:::${statement.value}/runs/*", "arn:aws:s3:::${statement.value}/raw/*"]
+    }
   }
 }
 
@@ -94,6 +105,7 @@ resource "aws_lambda_function" "collector" {
       COLLECTOR_SINCE          = var.collector_since
       COLLECTOR_RETENTION      = var.collector_retention
       COLLECTOR_SOURCE_TIMEOUT = var.collector_source_timeout
+      COLLECTOR_ARCHIVE_BUCKET = var.archive_bucket
     }
   }
 
@@ -130,8 +142,9 @@ data "aws_iam_policy_document" "scheduler_assume" {
 }
 
 resource "aws_iam_role" "scheduler" {
-  name               = "${local.name}-scheduler"
-  assume_role_policy = data.aws_iam_policy_document.scheduler_assume.json
+  name                 = "${local.name}-scheduler"
+  assume_role_policy   = data.aws_iam_policy_document.scheduler_assume.json
+  permissions_boundary = var.permissions_boundary_arn
 }
 
 data "aws_iam_policy_document" "scheduler" {
@@ -166,4 +179,70 @@ resource "aws_scheduler_schedule" "collector" {
       maximum_retry_attempts = 0
     }
   }
+}
+
+# Alerting
+#
+# One failed source doesn't fail the run (so the scheduler doesn't alert on one
+# flaky feed), which means the function's Errors metric never sees it. Count
+# the collector's "source failed" log lines instead, and alarm when some source
+# failed in every run of the last day.
+
+resource "aws_cloudwatch_log_metric_filter" "source_failures" {
+  name           = "${local.name}-source-failures"
+  log_group_name = aws_cloudwatch_log_group.collector.name
+  pattern        = "{ $.msg = \"source failed\" }"
+
+  metric_transformation {
+    name      = "SourceFailures"
+    namespace = "Arium/Collector"
+    value     = "1"
+  }
+}
+
+resource "aws_sns_topic" "alerts" {
+  name = "${local.name}-alerts"
+}
+
+resource "aws_sns_topic_subscription" "alerts_email" {
+  count     = var.alarm_email == "" ? 0 : 1
+  topic_arn = aws_sns_topic.alerts.arn
+  protocol  = "email"
+  endpoint  = var.alarm_email
+}
+
+resource "aws_cloudwatch_metric_alarm" "source_failures" {
+  alarm_name        = "${local.name}-source-failing"
+  alarm_description = "A collector source failed in each of the last ${var.source_failure_runs} scheduled runs. Check ${aws_cloudwatch_log_group.collector.name} for \"source failed\"."
+
+  namespace           = aws_cloudwatch_log_metric_filter.source_failures.metric_transformation[0].namespace
+  metric_name         = aws_cloudwatch_log_metric_filter.source_failures.metric_transformation[0].name
+  statistic           = "Sum"
+  period              = var.run_interval_seconds
+  evaluation_periods  = var.source_failure_runs
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  threshold           = 1
+  # The filter only emits on a failure, so no data means no failures.
+  treat_missing_data = "notBreaching"
+
+  alarm_actions = [aws_sns_topic.alerts.arn]
+  ok_actions    = [aws_sns_topic.alerts.arn]
+}
+
+resource "aws_cloudwatch_metric_alarm" "function_errors" {
+  alarm_name        = "${local.name}-errors"
+  alarm_description = "The collector run failed (every source failed, or the MongoDB write did)."
+
+  namespace           = "AWS/Lambda"
+  metric_name         = "Errors"
+  dimensions          = { FunctionName = aws_lambda_function.collector.function_name }
+  statistic           = "Sum"
+  period              = var.run_interval_seconds
+  evaluation_periods  = 1
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  threshold           = 1
+  treat_missing_data  = "notBreaching"
+
+  alarm_actions = [aws_sns_topic.alerts.arn]
+  ok_actions    = [aws_sns_topic.alerts.arn]
 }

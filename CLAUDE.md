@@ -126,7 +126,7 @@ writes it to a directory, meant to be a Docker volume. With `-mongo-uri` (env `M
 then syncs the stored articles into Mongo's `news` collection, which the API serves from `GET /api/v1/news`.
 
 - Sources live in `internal/collector/<source>/`: `rss` (RSS/Atom feeds via gofeed) and `hackernews` (Algolia
-  HN Search, title keyword queries, ≥20 points, only stories newer than `-since`). The default source list is
+  HN Search, title keyword queries run at most 4 at a time, ≥20 points, only stories newer than `-since`). The default source list is
   `cmd/collector/sources.json`, embedded with `go:embed`; `-sources` points at a replacement. Each flag also has a
   `COLLECTOR_*` env var.
 - `Collector.Collect` runs every `Source` concurrently, each with its own timeout and with panics recovered, then:
@@ -162,7 +162,11 @@ then syncs the stored articles into Mongo's `news` collection, which the API ser
 - In Compose the collector also runs once at startup (`COLLECTOR_RUN_ON_START=true`, flag `-run-on-start`), so a
   fresh stack gets news without waiting for the next slot. It writes a heartbeat due now before that run, so the
   healthcheck gives it the usual 10-minute grace.
-- Hacker News is low-volume by design (expect 0–5 stories a week); the RSS feeds supply most articles.
+- Hacker News is lower-volume than the RSS feeds (a dry run on 2026-10-26 found 19 stories in the 7-day window). Its
+  queries used to run one at a time and timed out on Lambda on almost every run from Oct 12 to Oct 26, 2026, so
+  its scarcity in Mongo before then was an outage, not low volume.
+- On Lambda, CloudWatch alarms cover failed runs and a source failing for 3 runs in a row (SNS topic, optional
+  `alarm_email`); see `devops/terraform/README.md`.
 - On AWS Lambda (`devops/terraform/`, see its README) the same binary detects `AWS_LAMBDA_RUNTIME_API` and runs
   one collection per invocation (EventBridge Scheduler) in Mongo-only mode: no file store, `news.Service.Ingest`
   inserts articles whose `_id` and `title_key` aren't stored yet (never overwriting, so `fetched_at` stays first-seen)
