@@ -53,9 +53,9 @@ variable "collector_retention" {
 }
 
 variable "collector_source_timeout" {
-  description = "Per-source fetch timeout (COLLECTOR_SOURCE_TIMEOUT)."
+  description = "Per-source fetch timeout (COLLECTOR_SOURCE_TIMEOUT). Longer than Compose's 15s because Algolia (Hacker News) sometimes takes over 10s to answer from AWS."
   type        = string
-  default     = "15s"
+  default     = "90s"
 }
 
 variable "lambda_memory_mb" {
@@ -67,7 +67,7 @@ variable "lambda_memory_mb" {
 variable "lambda_timeout_seconds" {
   description = "Function timeout. A run fetches every source concurrently (collector_source_timeout each) and then writes to MongoDB (up to 1 minute)."
   type        = number
-  default     = 120
+  default     = 180
 }
 
 variable "log_retention_days" {
