@@ -78,6 +78,11 @@ are idempotent, so the next one catches up.
 Two CloudWatch alarms publish to the SNS topic in `terraform output alerts_topic_arn`. Set `alarm_email` to
 subscribe an address; AWS sends a confirmation link that must be clicked before alerts arrive.
 
+For Slack, authorize the workspace once in the console (Amazon Q Developer in chat applications → Configure new
+client → Slack; use us-west-2 or us-east-2, since us-east-1 has no endpoint), run `/invite @Amazon Q` in the channel,
+then set `slack_team_id` (shown in the console after authorizing). `slack_channel_id` defaults to the alerts
+channel. The channel can only receive notifications (`ReadOnlyAccess` guardrail).
+
 - `arium-collector-errors`: a run failed (the `Errors` metric).
 - `arium-collector-source-failing`: some source failed in each of the last `source_failure_runs` (default 3) runs.
   A single failed source doesn't fail the run, so `Errors` never shows it. A metric filter counts the

@@ -246,3 +246,38 @@ resource "aws_cloudwatch_metric_alarm" "function_errors" {
   alarm_actions = [aws_sns_topic.alerts.arn]
   ok_actions    = [aws_sns_topic.alerts.arn]
 }
+
+# Slack notifications through AWS Chatbot (Amazon Q Developer in chat
+# applications). Authorizing the workspace is a one-time OAuth step in the
+# console that Terraform can't do; this only creates the channel once
+# slack_team_id is set.
+
+data "aws_iam_policy_document" "chatbot_assume" {
+  statement {
+    actions = ["sts:AssumeRole"]
+    principals {
+      type        = "Service"
+      identifiers = ["chatbot.amazonaws.com"]
+    }
+  }
+}
+
+resource "aws_iam_role" "chatbot" {
+  count                = var.slack_team_id == "" ? 0 : 1
+  name                 = "${local.name}-chatbot"
+  assume_role_policy   = data.aws_iam_policy_document.chatbot_assume.json
+  permissions_boundary = var.permissions_boundary_arn
+}
+
+resource "aws_chatbot_slack_channel_configuration" "alerts" {
+  count              = var.slack_team_id == "" ? 0 : 1
+  configuration_name = "${local.name}-alerts"
+  slack_team_id      = var.slack_team_id
+  slack_channel_id   = var.slack_channel_id
+  iam_role_arn       = aws_iam_role.chatbot[0].arn
+  sns_topic_arns     = [aws_sns_topic.alerts.arn]
+  logging_level      = "ERROR"
+
+  # Notifications only: Slack users can't run commands against the account.
+  guardrail_policy_arns = ["arn:aws:iam::aws:policy/ReadOnlyAccess"]
+}

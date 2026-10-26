@@ -111,3 +111,15 @@ variable "archive_bucket" {
   type        = string
   default     = ""
 }
+
+variable "slack_team_id" {
+  description = "Slack workspace ID (T...) authorized in the AWS Chatbot console. Empty skips Slack notifications."
+  type        = string
+  default     = ""
+}
+
+variable "slack_channel_id" {
+  description = "Slack channel ID (C...) that receives collector alarms. Invite the AWS app to it first (/invite @Amazon Q)."
+  type        = string
+  default     = "C0CC325HB5G"
+}
