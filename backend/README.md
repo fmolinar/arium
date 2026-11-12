@@ -173,6 +173,7 @@ isn't reachable through the API port. Along with Go runtime and process metrics:
 |---|---|---|
 | `http_server_request_duration_seconds` (histogram) | `http_request_method`, `http_route`, `http_response_status_code` | API request duration; its `_count` gives rate and errors |
 | `http_server_active_requests` | `http_request_method` | API requests in flight |
+| `db_client_operation_duration_seconds` (histogram) | `db_operation_name`, `db_collection_name`, ... | Duration of the API's MongoDB commands (otelmongo) |
 | `collector_runs_total` | `result` (`success`, `failure`) | Collector runs |
 | `collector_run_duration_seconds` (histogram) | `result` | Run duration, including storage and the MongoDB sync |
 | `collector_articles_written_total` | | New articles stored |
@@ -185,6 +186,14 @@ isn't reachable through the API port. Along with Go runtime and process metrics:
 `http_route` is the chi route pattern (`/api/v1/news`, `/api/v1/users/me`), or `unmatched` for a 404 that matched
 no route, so labels stay low-cardinality. Collector metrics can only be scraped while the scheduler is running.
 Prometheus and the Grafana dashboards that read these metrics are in [`devops/observability`](../devops/observability).
+
+The API also records traces when `OTEL_EXPORTER_OTLP_ENDPOINT` is set (`http://tempo:4318` in Compose), sending
+them over OTLP/HTTP; the other standard `OTEL_*` exporter and sampler variables apply too. Each request gets a
+server span named after its route (`GET /api/v1/news/{id}`), with a client span for every MongoDB command under it.
+Command bodies aren't recorded, since they hold user data. The span's `client.address` is the `CF-Connecting-IP`
+address the logs use, not `X-Forwarded-For`. The API is treated as a public endpoint: a client's `traceparent`
+starts a new trace linked to it, rather than continuing it. `middleware.Tracing` sits outside `Logging`, so the
+access log line and anything else logged with the request's context carry `trace_id` and `span_id`.
 
 ## News collector
 

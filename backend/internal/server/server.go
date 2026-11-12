@@ -9,6 +9,7 @@ import (
 	chimiddleware "github.com/go-chi/chi/v5/middleware"
 	"go.mongodb.org/mongo-driver/v2/mongo"
 	"go.opentelemetry.io/otel/metric"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/fmolinar/arium/backend/internal/config"
 	"github.com/fmolinar/arium/backend/internal/middleware"
@@ -22,15 +23,16 @@ type Server struct {
 	db         *mongo.Client
 }
 
-// New builds the API server. HTTP metrics are recorded with meter.
-func New(cfg config.Config, db *mongo.Client, meter metric.Meter, userHandler *user.Handler, newsHandler *news.Handler) *Server {
+// New builds the API server. HTTP metrics are recorded with meter, and a
+// span per request is started from tracer.
+func New(cfg config.Config, db *mongo.Client, meter metric.Meter, tracer trace.TracerProvider, userHandler *user.Handler, newsHandler *news.Handler) *Server {
 	server := &Server{
 		db: db,
 	}
 
 	server.httpServer = &http.Server{
 		Addr:              cfg.Address,
-		Handler:           server.routes(cfg, meter, userHandler, newsHandler),
+		Handler:           server.routes(cfg, meter, tracer, userHandler, newsHandler),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
 		WriteTimeout:      15 * time.Second,
@@ -40,9 +42,10 @@ func New(cfg config.Config, db *mongo.Client, meter metric.Meter, userHandler *u
 	return server
 }
 
-func (s *Server) routes(cfg config.Config, meter metric.Meter, userHandler *user.Handler, newsHandler *news.Handler) http.Handler {
+func (s *Server) routes(cfg config.Config, meter metric.Meter, tracer trace.TracerProvider, userHandler *user.Handler, newsHandler *news.Handler) http.Handler {
 	router := chi.NewRouter()
 
+	router.Use(middleware.Tracing(tracer))
 	router.Use(middleware.Logging)
 	router.Use(middleware.Metrics(meter))
 	router.Use(middleware.Recoverer)

@@ -10,7 +10,7 @@ const SECTIONS = [
       <List
         items={[
           'No ads, no analytics or tracking scripts, and no cookies.',
-          'Our servers log basic request details (such as your IP address) to keep the site running and secure.',
+          'Our servers log basic request details (such as your IP address) for 14 days to keep the site running and secure.',
           'If you create an account, we store your name, email address and a hashed password.',
           'Your theme and bookmarks stay in your own browser.',
           'We don’t sell or share your data for marketing.',
@@ -34,11 +34,13 @@ const SECTIONS = [
     body: (
       <>
         <p>
-          <span className="text-text-h">Request logs.</span> When your browser talks to our API,
+          <span className="text-text-h">Request logs and traces.</span> When your browser talks to our API,
           the server logs the time, the page or endpoint requested, the response status and
           timing, your IP address, your browser&apos;s user-agent string and a random request ID.
-          We use these logs to operate the site, debug problems and detect abuse. That&apos;s our
-          legitimate interest in running a working, secure service.
+          It also records a trace of each request: the same details, plus how long each step took,
+          including database queries (but not their contents). We use these logs and traces to
+          operate the site, debug problems and detect abuse. That&apos;s our legitimate interest in
+          running a working, secure service.
         </p>
         <p>
           <span className="text-text-h">Service metrics.</span> We count requests, errors and
@@ -100,9 +102,9 @@ const SECTIONS = [
     heading: 'How long we keep it',
     body: (
       <p>
-        Request logs are capped in size and rotated automatically, so older entries are
-        overwritten as new traffic arrives. Account data is kept until you ask us to delete your
-        account. Aggregated metrics contain no personal data and expire after a few weeks.
+        Request logs and traces are deleted automatically after 14 days. Account data is kept
+        until you ask us to delete your account. Aggregated metrics contain no personal data and
+        expire after 30 days.
       </p>
     ),
   },

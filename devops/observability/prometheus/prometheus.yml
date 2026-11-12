@@ -5,6 +5,15 @@ global:
   scrape_interval: 15s
   evaluation_interval: 15s
 
+# SLO recording rules and alerts, with their tests in rules/tests.
+rule_files:
+  - /etc/prometheus/rules/*.rules.yml
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: ["alertmanager:9093"]
+
 scrape_configs:
   - job_name: api
     static_configs:
@@ -19,3 +28,20 @@ scrape_configs:
   - job_name: prometheus
     static_configs:
       - targets: ["localhost:9090"]
+
+  # The rest of the observability stack, so it's watched too.
+  - job_name: alertmanager
+    static_configs:
+      - targets: ["alertmanager:9093"]
+
+  - job_name: loki
+    static_configs:
+      - targets: ["loki:3100"]
+
+  - job_name: tempo
+    static_configs:
+      - targets: ["tempo:3200"]
+
+  - job_name: alloy
+    static_configs:
+      - targets: ["alloy:12345"]

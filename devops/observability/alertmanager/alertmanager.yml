@@ -1,0 +1,28 @@
+# Alertmanager receives the alerts in ../prometheus/rules. Alerts show in its
+# UI (http://localhost:9093) and in Grafana's Alerting page, but the default
+# receiver has no integrations yet, so nothing is sent anywhere. To get paged,
+# add one to "default", e.g. a Discord or Slack webhook read from a file
+# mounted next to this one (keep the secret out of the repo):
+#
+#   receivers:
+#     - name: default
+#       discord_configs:
+#         - webhook_url_file: /etc/alertmanager/secrets/discord-webhook
+#
+# Check changes with `amtool check-config`, then reload with
+# `docker compose kill -s SIGHUP alertmanager` (the deploy job does both).
+route:
+  receiver: default
+  group_by: [alertname, slo]
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
+
+# A burning budget already implies the slower windows; don't repeat them.
+inhibit_rules:
+  - source_matchers: [severity="page"]
+    target_matchers: [severity="ticket"]
+    equal: [alertname, slo]
+
+receivers:
+  - name: default

@@ -92,8 +92,18 @@ jobs:
       - name: Build images
         run: docker compose build
 
+      # check config also checks the rule files it loads.
       - name: Check Prometheus config
         run: docker compose run --rm --no-deps --entrypoint promtool prometheus check config /etc/prometheus/prometheus.yml
+
+      - name: Test alert rules
+        run: docker compose run --rm --no-deps --entrypoint promtool prometheus test rules /etc/prometheus/rules/tests/slo_test.yml
+
+      - name: Check Alertmanager, Loki and Alloy configs
+        run: |
+          docker compose run --rm --no-deps --entrypoint amtool alertmanager check-config /etc/alertmanager/alertmanager.yml
+          docker compose run --rm --no-deps loki -config.file=/etc/loki/loki.yaml -verify-config
+          docker compose run --rm --no-deps alloy fmt /etc/alloy/config.alloy > /dev/null
 
       - name: Deploy container
         run: docker compose up -d --remove-orphans
@@ -103,10 +113,19 @@ jobs:
       - name: Reload Prometheus config
         run: docker compose kill -s SIGHUP prometheus
 
+      # The observability configs are bind-mounted too. Alertmanager and Alloy
+      # reload on SIGHUP; Loki, Tempo and Grafana's datasources can't, so those
+      # are restarted (Alloy retries pushes meanwhile, and a few seconds of
+      # spans may be dropped).
+      - name: Reload observability configs
+        run: |
+          docker compose kill -s SIGHUP alertmanager alloy
+          docker compose restart loki tempo grafana
+
       - name: Display deployment status
         run: |
           docker compose ps
-          docker compose logs --tail=50 app collector prometheus grafana
+          docker compose logs --tail=50 app collector prometheus grafana alertmanager loki tempo alloy
 
       - name: Remove unused images
         run: docker image prune -f

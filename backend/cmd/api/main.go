@@ -41,7 +41,20 @@ func main() {
 		metrics.Serve(ctx, cfg.MetricsAddress)
 	}
 
-	db, err := database.Connect(ctx, cfg.MongoURI)
+	tracing, err := telemetry.NewTracing(ctx, "arium-api")
+	if err != nil {
+		logging.Fatal("set up tracing", "error", err)
+	}
+
+	// Deferred after the database's Disconnect, so it runs later and flushes
+	// the spans of the last requests and commands.
+	defer func() {
+		if err := tracing.Shutdown(context.Background()); err != nil {
+			slog.Error("shut down tracing", "error", err)
+		}
+	}()
+
+	db, err := database.Connect(ctx, cfg.MongoURI, tracing.Provider())
 	if err != nil {
 		logging.Fatal("connect to MongoDB", "error", err)
 	}
@@ -66,7 +79,7 @@ func main() {
 
 	newsHandler := news.NewHandler(news.NewService(newsRepo))
 
-	app := server.New(cfg, db, metrics.Meter("github.com/fmolinar/arium/backend/internal/server"), userHandler, newsHandler)
+	app := server.New(cfg, db, metrics.Meter("github.com/fmolinar/arium/backend/internal/server"), tracing.Provider(), userHandler, newsHandler)
 
 	go func() {
 		slog.Info("API listening", "address", cfg.Address)

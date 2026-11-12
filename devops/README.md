@@ -7,7 +7,7 @@ is a placeholder for upcoming work that isn't in the repository yet.
 | Directory | Status | Contents |
 |---|---|---|
 | [`docker/`](docker) | in use | Dockerfiles for the frontend, API and collector, and the Compose stack |
-| [`observability/`](observability) | in use | Prometheus scrape config, Grafana datasource and dashboards |
+| [`observability/`](observability) | in use | Prometheus (scrape config, SLO rules and their tests), Alertmanager, Loki, Tempo and Alloy configs, Grafana datasources and dashboards |
 | [`terraform/`](terraform) | in use | The news collector on AWS Lambda, scheduled by EventBridge, writing to MongoDB Atlas and archiving to S3; a `bootstrap/` stack for the state and archive buckets and CI permissions |
 | `jenkins/` | planned | Jenkins pipeline |
 | [`kubernetes/`](kubernetes) | in progress | Kustomize manifests: the collector as a `CronJob`; the rest of the stack is planned |
@@ -20,7 +20,7 @@ is a placeholder for upcoming work that isn't in the repository yet.
 | Orchestration | Docker Compose (`devops/docker/compose.yaml`) |
 | CI/CD | GitHub Actions ([`.github/workflows/deploy-local.yaml`](../.github/workflows/deploy-local.yaml)) on a **self-hosted** runner |
 | Secrets | `JWT_SECRET` comes from a GitHub Actions secret in CI, and from `devops/docker/.env` locally |
-| Observability | OpenTelemetry metrics → Prometheus → Grafana, JSON logs via `log/slog` |
+| Observability | OpenTelemetry metrics → Prometheus, JSON logs via `log/slog` → Alloy → Loki, OTLP traces → Tempo, SLO burn-rate alerts → Alertmanager, all in Grafana |
 
 ## CI/CD pipeline
 
@@ -41,19 +41,23 @@ flowchart LR
 
     subgraph deploy ["job: deploy (15 min limit)"]
         direction TB
-        verify["docker / compose versions"] --> images["docker compose build"] --> promtool["promtool check config"] --> up["docker compose up -d<br/>--remove-orphans"] --> reload["SIGHUP prometheus<br/>reload config"] --> status["compose ps +<br/>recent logs"] --> prune["docker image prune"]
+        verify["docker / compose versions"] --> images["docker compose build"] --> promtool["promtool check config<br/>+ test rules"] --> checks["amtool, loki, alloy<br/>config checks"] --> up["docker compose up -d<br/>--remove-orphans"] --> reload["SIGHUP prometheus,<br/>alertmanager, alloy"] --> restart["restart loki,<br/>tempo, grafana"] --> status["compose ps +<br/>recent logs"] --> prune["docker image prune"]
     end
 
-    deploy --> stack[("running stack:<br/>app · backend · mongo · collector<br/>prometheus · grafana")]
+    deploy --> stack[("running stack:<br/>app · backend · mongo · collector<br/>prometheus · alertmanager · loki · tempo · alloy · grafana")]
 ```
 
 - **Why port 27018:** the test job's MongoDB uses host port 27018 because the deployed stack's MongoDB already
   holds 27017 on the same machine.
 - **Deploying means replacing in place:** `compose up -d` recreates only containers whose image or configuration
-  changed. Named volumes (`mongo_data`, `collector_data`, `prometheus_data`, `grafana_data`) survive redeploys.
-  Prometheus and Grafana read their config and dashboards from bind mounts, so `compose up` doesn't recreate them
-  when only those files change. The deploy job therefore sends Prometheus a `SIGHUP` to reload `prometheus.yml`,
-  and Grafana reloads dashboards from disk every 30s. (Datasource changes need `docker compose restart grafana`.)
+  changed. Named volumes (`mongo_data`, `collector_data`, and one per observability service) survive redeploys.
+  The observability services read their config from bind mounts, so `compose up` doesn't recreate them when only
+  those files change. The deploy job therefore sends `SIGHUP` to Prometheus (config and rules), Alertmanager and
+  Alloy, and restarts Loki, Tempo and Grafana, which can't reload. Grafana also reloads dashboards from disk every
+  30s.
+- **Config checks before deploying:** `promtool check config` and `promtool test rules` (the SLO alert unit
+  tests), `amtool check-config`, `loki -verify-config` and `alloy fmt`. A failure stops the deploy before
+  `compose up`, so the running stack is left as it was.
 - **Not in CI yet:** frontend lint and build checks, and a post-deploy health check against `/health`.
 
 See [`docker/README.md`](docker) for the services, images and volumes.

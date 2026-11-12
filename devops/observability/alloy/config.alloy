@@ -1,0 +1,77 @@
+// Grafana Alloy: ships the stdout/stderr of this stack's containers to Loki.
+//
+// Alloy reads containers and their logs from the Docker API through
+// docker-socket-proxy, which only allows read-only container endpoints, so
+// Alloy never holds the Docker socket itself.
+
+discovery.docker "containers" {
+  host = "tcp://docker-socket-proxy:2375"
+
+  // The Docker host also runs another project's containers; only ours.
+  filter {
+    name   = "name"
+    values = ["arium-"]
+  }
+}
+
+discovery.relabel "containers" {
+  targets = []
+
+  rule {
+    source_labels = ["__meta_docker_container_name"]
+    regex         = "/(arium-.*)"
+    action        = "keep"
+  }
+
+  rule {
+    source_labels = ["__meta_docker_container_name"]
+    regex         = "/(.*)"
+    target_label  = "container"
+  }
+
+  // The compose service name: backend, collector, app, mongo, ...
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_service"]
+    target_label  = "compose_service"
+  }
+}
+
+loki.source.docker "containers" {
+  host          = "tcp://docker-socket-proxy:2375"
+  targets       = discovery.docker.containers.targets
+  relabel_rules = discovery.relabel.containers.rules
+  forward_to    = [loki.process.json.receiver]
+}
+
+// The API and the collector log JSON (see backend/internal/logging). Index the
+// level as a label, and keep trace_id as structured metadata so a trace's logs
+// can be found without parsing every line. Other containers' lines pass
+// through unchanged.
+loki.process "json" {
+  stage.json {
+    expressions = {
+      level    = "level",
+      trace_id = "trace_id",
+    }
+  }
+
+  stage.labels {
+    values = {
+      level = "",
+    }
+  }
+
+  stage.structured_metadata {
+    values = {
+      trace_id = "",
+    }
+  }
+
+  forward_to = [loki.write.loki.receiver]
+}
+
+loki.write "loki" {
+  endpoint {
+    url = "http://loki:3100/loki/api/v1/push"
+  }
+}

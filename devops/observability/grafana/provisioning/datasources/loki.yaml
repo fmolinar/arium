@@ -1,0 +1,19 @@
+# Container logs (shipped by alloy). A trace_id in a log line links to that
+# trace in Tempo.
+apiVersion: 1
+
+datasources:
+  - name: Loki
+    uid: loki
+    type: loki
+    access: proxy
+    url: http://loki:3100
+    editable: false
+    jsonData:
+      derivedFields:
+        - name: TraceID
+          matcherType: regex
+          matcherRegex: '"trace_id":"(\w+)"'
+          datasourceUid: tempo
+          url: "$${__value.raw}"
+          urlDisplayLabel: View trace

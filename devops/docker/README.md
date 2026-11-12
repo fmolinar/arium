@@ -18,7 +18,14 @@ flowchart LR
 
     prometheus["prometheus<br/>arium-prometheus"] -- "scrape :9464/metrics" --> backend
     prometheus -- "scrape :9464/metrics" --> collector
+    prometheus -- "alerts" --> alertmanager["alertmanager<br/>arium-alertmanager"]
+    backend -- "OTLP spans :4318" --> tempo["tempo<br/>arium-tempo"]
+    proxy["docker-socket-proxy<br/>read-only Docker API"] -- "container logs" --> alloy["alloy<br/>arium-alloy"]
+    alloy -- "push" --> loki["loki<br/>arium-loki"]
     grafana["grafana<br/>arium-grafana"] -- "PromQL" --> prometheus
+    grafana -- "LogQL" --> loki
+    grafana -- "TraceQL" --> tempo
+    grafana --> alertmanager
     user -- "127.0.0.1:3001" --> grafana
 
     subgraph net ["network: arium_network"]
@@ -27,9 +34,16 @@ flowchart LR
         mongo
         collector
         prometheus
+        alertmanager
+        loki
+        tempo
+        alloy
         grafana
     end
 ```
+
+`docker-socket-proxy` sits on a second, internal network (`docker_api`) shared only with `alloy`, and `tempo-init`
+(not shown) runs once before `tempo` to make its volume writable.
 
 | Service | Image (Dockerfile) | Ports (host → container) | Storage | Restart |
 |---|---|---|---|---|
@@ -39,6 +53,12 @@ flowchart LR
 | `collector` | `arium-collector` ([`Dockerfile.collector`](Dockerfile.collector)) | none | `collector_data` → `/data` | unless-stopped |
 | `prometheus` | `prom/prometheus:v3.15.0` | 127.0.0.1:9090 → 9090 | `prometheus_data` → `/prometheus` | unless-stopped |
 | `grafana` | `grafana/grafana:13.2.3` | 127.0.0.1:3001 → 3000 | `grafana_data` → `/var/lib/grafana` | unless-stopped |
+| `alertmanager` | `prom/alertmanager:v0.34.2` | 127.0.0.1:9093 → 9093 | `alertmanager_data` → `/alertmanager` | unless-stopped |
+| `loki` | `grafana/loki:3.7.9` | none | `loki_data` → `/loki` | unless-stopped |
+| `tempo` | `grafana/tempo:2.10.10` | none | `tempo_data` → `/var/tempo` | unless-stopped |
+| `tempo-init` | `grafana/tempo:2.10.10` | none | `tempo_data` → `/var/tempo` | runs once |
+| `alloy` | `grafana/alloy:v1.21.1` | none | `alloy_data` → `/var/lib/alloy/data` | unless-stopped |
+| `docker-socket-proxy` | `tecnativa/docker-socket-proxy:v0.5.0` | none | `/var/run/docker.sock` (read-only) | unless-stopped |
 
 The browser calls the API at relative `/api` URLs on port 3000, and `vite preview` in the `app` container
 proxies them to `backend` (`API_PROXY_TARGET=http://backend:8080`), so those requests are same-origin. The API's
@@ -49,6 +69,11 @@ and marks the container unhealthy once a scheduled run is more than 10 minutes o
 The backend and collector serve Prometheus metrics on port 9464, which is reachable only on `arium_network`.
 Prometheus scrapes them every 15s, and Grafana reads Prometheus. Their configuration, datasource and dashboards
 are mounted read-only from [`devops/observability`](../observability). Both publish their ports on 127.0.0.1 only.
+
+The backend sends a trace of every request to Tempo, and Alloy ships the stdout of every `arium-*` container to
+Loki. Alloy reaches Docker only through `docker-socket-proxy`, which allows listing containers and reading their
+logs and refuses everything else. Prometheus evaluates the SLO and availability rules and sends alerts to
+Alertmanager. Loki and Tempo keep 14 days, Prometheus 30 (see the Privacy Policy before changing either).
 
 ## Images
 
@@ -78,7 +103,8 @@ Compose reads `devops/docker/.env`, which is gitignored. Copy [`.env.example`](.
 | `COLLECTOR_SOURCE_TIMEOUT` | collector | `15s` | Per-source timeout |
 | `LOG_LEVEL` | backend, collector | `info` | `debug`, `info`, `warn` or `error` |
 | `GRAFANA_ADMIN_PASSWORD` | grafana | `admin` | Password for the `admin` user. Applied when `grafana_data` is first created |
-| `PROMETHEUS_RETENTION` | prometheus | `15d` | How long Prometheus keeps metrics |
+| `PROMETHEUS_RETENTION` | prometheus | `30d` | How long Prometheus keeps metrics. The SLOs are measured over 30 days |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | backend | `http://tempo:4318` | Where the API sends traces. Set it empty to turn tracing off |
 
 The backend's `ADDRESS` and `FRONTEND_URL` are set in `compose.yaml` itself. In CI the deploy job takes `JWT_SECRET`
 and `MONGO_URI` from the GitHub secrets of the same names.
@@ -93,7 +119,7 @@ docker compose up -d --build                # build and start everything
 docker compose ps
 docker compose logs -f backend              # or app / mongo / collector
 docker compose down                         # stop; volumes are kept
-docker compose down -v                      # stop and DELETE all volumes (Mongo, collector, Prometheus, Grafana data)
+docker compose down -v                      # stop and DELETE all volumes (Mongo, collector, metrics, logs, traces, Grafana)
 
 # Collector
 docker compose logs -f collector            # runs, and the next scheduled time
@@ -102,7 +128,10 @@ docker run --rm -v docker_collector_data:/data alpine ls -R /data   # browse the
 
 # Observability
 open http://localhost:3001                  # Grafana (admin / GRAFANA_ADMIN_PASSWORD): Arium folder
-open http://localhost:9090/targets          # Prometheus scrape targets: api and collector should be UP
+open http://localhost:9090/targets          # Prometheus scrape targets: all should be UP
+open http://localhost:9090/alerts           # alert rules and their state
+open http://localhost:9093                  # Alertmanager: firing alerts and silences
+# Grafana → Explore: Loki ({compose_service="backend"}) and Tempo (search by service arium-api)
 docker compose logs backend | jq 'select(.msg == "request")'   # logs are JSON lines
 ```
 
