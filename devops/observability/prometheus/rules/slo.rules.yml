@@ -1,0 +1,259 @@
+# API SLOs and multiwindow, multi-burn-rate alerts (Google SRE Workbook,
+# "Alerting on SLOs"), plus availability alerts for the API and the collector.
+#
+# SLOs, both over a 30-day window (Prometheus keeps 30 days, see compose.yaml):
+#   availability: 99.5% of API requests don't return a 5xx (budget 0.5%,
+#                 about 3.6 hours of full outage a month)
+#   latency:      99% of API requests finish in 500 ms or less (budget 1%)
+#
+# Both are measured by the API itself, so they can't see an outage that stops
+# requests reaching it, like the Mac or the tunnel going down. APIDown covers a
+# dead backend; a black-box probe of the public URL would cover the rest.
+#
+# A burn rate is how fast the budget is being spent: 1 spends exactly the
+# budget in 30 days, 14.4 spends 2% of it in an hour. Each alert needs both a
+# long and a short window over its threshold, so it fires fast and also
+# resolves fast once the problem stops. The site gets little traffic, so the
+# burn-rate alerts also need at least 20 requests in the long window; with less,
+# a single error would look like a burning budget.
+#
+# Tested by tests/slo_test.yml (`promtool test rules`, run by the deploy job).
+groups:
+  - name: api-slo-recording
+    rules:
+      - record: slo:api_requests:rate5m
+        expr: sum(rate(http_server_request_duration_seconds_count{job="api"}[5m]))
+      - record: slo:api_errors:ratio_rate5m
+        expr: |
+          sum(rate(http_server_request_duration_seconds_count{job="api",http_response_status_code=~"5.."}[5m]))
+            / slo:api_requests:rate5m
+      - record: slo:api_slow:ratio_rate5m
+        expr: |
+          1 - sum(rate(http_server_request_duration_seconds_bucket{job="api",le="0.5"}[5m]))
+            / slo:api_requests:rate5m
+      - record: slo:api_requests:rate30m
+        expr: sum(rate(http_server_request_duration_seconds_count{job="api"}[30m]))
+      - record: slo:api_errors:ratio_rate30m
+        expr: |
+          sum(rate(http_server_request_duration_seconds_count{job="api",http_response_status_code=~"5.."}[30m]))
+            / slo:api_requests:rate30m
+      - record: slo:api_slow:ratio_rate30m
+        expr: |
+          1 - sum(rate(http_server_request_duration_seconds_bucket{job="api",le="0.5"}[30m]))
+            / slo:api_requests:rate30m
+      - record: slo:api_requests:rate1h
+        expr: sum(rate(http_server_request_duration_seconds_count{job="api"}[1h]))
+      - record: slo:api_errors:ratio_rate1h
+        expr: |
+          sum(rate(http_server_request_duration_seconds_count{job="api",http_response_status_code=~"5.."}[1h]))
+            / slo:api_requests:rate1h
+      - record: slo:api_slow:ratio_rate1h
+        expr: |
+          1 - sum(rate(http_server_request_duration_seconds_bucket{job="api",le="0.5"}[1h]))
+            / slo:api_requests:rate1h
+      - record: slo:api_requests:rate2h
+        expr: sum(rate(http_server_request_duration_seconds_count{job="api"}[2h]))
+      - record: slo:api_errors:ratio_rate2h
+        expr: |
+          sum(rate(http_server_request_duration_seconds_count{job="api",http_response_status_code=~"5.."}[2h]))
+            / slo:api_requests:rate2h
+      - record: slo:api_slow:ratio_rate2h
+        expr: |
+          1 - sum(rate(http_server_request_duration_seconds_bucket{job="api",le="0.5"}[2h]))
+            / slo:api_requests:rate2h
+      - record: slo:api_requests:rate6h
+        expr: sum(rate(http_server_request_duration_seconds_count{job="api"}[6h]))
+      - record: slo:api_errors:ratio_rate6h
+        expr: |
+          sum(rate(http_server_request_duration_seconds_count{job="api",http_response_status_code=~"5.."}[6h]))
+            / slo:api_requests:rate6h
+      - record: slo:api_slow:ratio_rate6h
+        expr: |
+          1 - sum(rate(http_server_request_duration_seconds_bucket{job="api",le="0.5"}[6h]))
+            / slo:api_requests:rate6h
+
+  # The long windows read days of samples, so they're evaluated every 5
+  # minutes instead of every 15 seconds. That's plenty for alerts that need a
+  # condition to hold for an hour or more.
+  - name: api-slo-recording-long
+    interval: 5m
+    rules:
+      - record: slo:api_requests:rate1d
+        expr: sum(rate(http_server_request_duration_seconds_count{job="api"}[1d]))
+      - record: slo:api_errors:ratio_rate1d
+        expr: |
+          sum(rate(http_server_request_duration_seconds_count{job="api",http_response_status_code=~"5.."}[1d]))
+            / slo:api_requests:rate1d
+      - record: slo:api_slow:ratio_rate1d
+        expr: |
+          1 - sum(rate(http_server_request_duration_seconds_bucket{job="api",le="0.5"}[1d]))
+            / slo:api_requests:rate1d
+      - record: slo:api_requests:rate3d
+        expr: sum(rate(http_server_request_duration_seconds_count{job="api"}[3d]))
+      - record: slo:api_errors:ratio_rate3d
+        expr: |
+          sum(rate(http_server_request_duration_seconds_count{job="api",http_response_status_code=~"5.."}[3d]))
+            / slo:api_requests:rate3d
+      - record: slo:api_slow:ratio_rate3d
+        expr: |
+          1 - sum(rate(http_server_request_duration_seconds_bucket{job="api",le="0.5"}[3d]))
+            / slo:api_requests:rate3d
+      - record: slo:api_requests:rate30d
+        expr: sum(rate(http_server_request_duration_seconds_count{job="api"}[30d]))
+      - record: slo:api_errors:ratio_rate30d
+        expr: |
+          sum(rate(http_server_request_duration_seconds_count{job="api",http_response_status_code=~"5.."}[30d]))
+            / slo:api_requests:rate30d
+      - record: slo:api_slow:ratio_rate30d
+        expr: |
+          1 - sum(rate(http_server_request_duration_seconds_bucket{job="api",le="0.5"}[30d]))
+            / slo:api_requests:rate30d
+
+  - name: api-slo-alerts
+    rules:
+      - alert: APIAvailabilityBudgetBurn
+        expr: |
+          slo:api_errors:ratio_rate1h > (14.4 * 0.005)
+          and slo:api_errors:ratio_rate5m > (14.4 * 0.005)
+          and on() slo:api_requests:rate1h * 3600 >= 20
+        for: 2m
+        labels:
+          severity: page
+          slo: availability
+          window: 1h
+        annotations:
+          summary: API availability (non-5xx responses) is burning its error budget 14.4x too fast
+          description: At this rate the API spends 2% of the 30-day error budget in 1 hour. Check the Arium SLOs and Arium API dashboards.
+      - alert: APIAvailabilityBudgetBurn
+        expr: |
+          slo:api_errors:ratio_rate6h > (6 * 0.005)
+          and slo:api_errors:ratio_rate30m > (6 * 0.005)
+          and on() slo:api_requests:rate6h * 21600 >= 20
+        for: 15m
+        labels:
+          severity: page
+          slo: availability
+          window: 6h
+        annotations:
+          summary: API availability (non-5xx responses) is burning its error budget 6x too fast
+          description: At this rate the API spends 5% of the 30-day error budget in 6 hours. Check the Arium SLOs and Arium API dashboards.
+      - alert: APIAvailabilityBudgetBurn
+        expr: |
+          slo:api_errors:ratio_rate1d > (3 * 0.005)
+          and slo:api_errors:ratio_rate2h > (3 * 0.005)
+          and on() slo:api_requests:rate1d * 86400 >= 20
+        for: 1h
+        labels:
+          severity: ticket
+          slo: availability
+          window: 1d
+        annotations:
+          summary: API availability (non-5xx responses) is burning its error budget 3x too fast
+          description: At this rate the API spends 10% of the 30-day error budget in 1 day. Check the Arium SLOs and Arium API dashboards.
+      - alert: APIAvailabilityBudgetBurn
+        expr: |
+          slo:api_errors:ratio_rate3d > (1 * 0.005)
+          and slo:api_errors:ratio_rate6h > (1 * 0.005)
+          and on() slo:api_requests:rate3d * 259200 >= 20
+        for: 3h
+        labels:
+          severity: ticket
+          slo: availability
+          window: 3d
+        annotations:
+          summary: API availability (non-5xx responses) is burning its error budget 1x too fast
+          description: At this rate the API spends 10% of the 30-day error budget in 3 days. Check the Arium SLOs and Arium API dashboards.
+      - alert: APILatencyBudgetBurn
+        expr: |
+          slo:api_slow:ratio_rate1h > (14.4 * 0.01)
+          and slo:api_slow:ratio_rate5m > (14.4 * 0.01)
+          and on() slo:api_requests:rate1h * 3600 >= 20
+        for: 2m
+        labels:
+          severity: page
+          slo: latency
+          window: 1h
+        annotations:
+          summary: API latency (responses within 500 ms) is burning its error budget 14.4x too fast
+          description: At this rate the API spends 2% of the 30-day error budget in 1 hour. Check the Arium SLOs and Arium API dashboards.
+      - alert: APILatencyBudgetBurn
+        expr: |
+          slo:api_slow:ratio_rate6h > (6 * 0.01)
+          and slo:api_slow:ratio_rate30m > (6 * 0.01)
+          and on() slo:api_requests:rate6h * 21600 >= 20
+        for: 15m
+        labels:
+          severity: page
+          slo: latency
+          window: 6h
+        annotations:
+          summary: API latency (responses within 500 ms) is burning its error budget 6x too fast
+          description: At this rate the API spends 5% of the 30-day error budget in 6 hours. Check the Arium SLOs and Arium API dashboards.
+      - alert: APILatencyBudgetBurn
+        expr: |
+          slo:api_slow:ratio_rate1d > (3 * 0.01)
+          and slo:api_slow:ratio_rate2h > (3 * 0.01)
+          and on() slo:api_requests:rate1d * 86400 >= 20
+        for: 1h
+        labels:
+          severity: ticket
+          slo: latency
+          window: 1d
+        annotations:
+          summary: API latency (responses within 500 ms) is burning its error budget 3x too fast
+          description: At this rate the API spends 10% of the 30-day error budget in 1 day. Check the Arium SLOs and Arium API dashboards.
+      - alert: APILatencyBudgetBurn
+        expr: |
+          slo:api_slow:ratio_rate3d > (1 * 0.01)
+          and slo:api_slow:ratio_rate6h > (1 * 0.01)
+          and on() slo:api_requests:rate3d * 259200 >= 20
+        for: 3h
+        labels:
+          severity: ticket
+          slo: latency
+          window: 3d
+        annotations:
+          summary: API latency (responses within 500 ms) is burning its error budget 1x too fast
+          description: At this rate the API spends 10% of the 30-day error budget in 3 days. Check the Arium SLOs and Arium API dashboards.
+
+  - name: availability
+    rules:
+      - alert: APIDown
+        expr: up{job="api"} == 0
+        for: 2m
+        labels:
+          severity: page
+        annotations:
+          summary: Prometheus can't scrape the API
+          description: The backend container is down or its metrics listener isn't answering.
+
+      - alert: CollectorDown
+        expr: up{job="collector"} == 0
+        for: 10m
+        labels:
+          severity: ticket
+        annotations:
+          summary: Prometheus can't scrape the news collector
+          description: The collector container is down or restarting.
+
+      # Runs are 8 hours apart, so 10 hours without a success means a whole
+      # slot was missed or failed.
+      - alert: CollectorStale
+        expr: time() - max(collector_last_success_timestamp_seconds{job="collector"}) > 10 * 3600
+        for: 5m
+        labels:
+          severity: ticket
+        annotations:
+          summary: No successful news collection in over 10 hours
+          description: Check the collector logs and the Arium Collector dashboard for failing sources or Mongo sync errors.
+
+      # The gauge is absent until the process's first successful run; the
+      # startup run normally sets it within a minute.
+      - alert: CollectorNeverSucceeded
+        expr: absent(collector_last_success_timestamp_seconds{job="collector"})
+        for: 10h
+        labels:
+          severity: ticket
+        annotations:
+          summary: The news collector hasn't succeeded since it started
+          description: Not one run has succeeded in 10 hours since the collector (or Prometheus) restarted.

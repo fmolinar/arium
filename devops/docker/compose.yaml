@@ -13,6 +13,10 @@ x-logging: &default-logging
 networks:
   arium_network:
     driver: bridge
+  # Only docker-socket-proxy and alloy, with no route out.
+  docker_api:
+    driver: bridge
+    internal: true
 services:
   app:
     logging: *default-logging
@@ -67,6 +71,9 @@ services:
       - LOG_LEVEL=${LOG_LEVEL:-info}
       # Prometheus metrics at /metrics, reachable only on the compose network.
       - METRICS_ADDRESS=:9464
+      # Spans for every request and MongoDB command go to Tempo over OTLP/HTTP.
+      # Empty disables tracing.
+      - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT-http://tempo:4318}
 
   # News collector. Runs on a schedule (3 times a day by default), keeps 30 days
   # of data in the collector_data volume, skips duplicate articles and syncs
@@ -161,18 +168,113 @@ services:
     command:
       - --config.file=/etc/prometheus/prometheus.yml
       - --storage.tsdb.path=/prometheus
-      - --storage.tsdb.retention.time=${PROMETHEUS_RETENTION:-15d}
+      # 30 days: the SLOs in ../observability/prometheus/rules are measured
+      # over 30 days.
+      - --storage.tsdb.retention.time=${PROMETHEUS_RETENTION:-30d}
     ports:
       - "127.0.0.1:9090:9090"
     volumes:
       - ../observability/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ../observability/prometheus/rules:/etc/prometheus/rules:ro
       - prometheus_data:/prometheus
     depends_on:
       - backend
       - collector
+      - alertmanager
 
-  # Dashboards and the Prometheus datasource are provisioned from
-  # devops/observability/grafana. Open http://localhost:3001 (admin / the
+  # Receives the alerts from Prometheus's rules. No receiver integrations are
+  # configured yet (see ../observability/alertmanager/alertmanager.yml).
+  alertmanager:
+    networks:
+      - arium_network
+    image: prom/alertmanager:v0.34.2
+    container_name: arium-alertmanager
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/alertmanager/alertmanager.yml
+      - --storage.path=/alertmanager
+    ports:
+      - "127.0.0.1:9093:9093"
+    volumes:
+      - ../observability/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - alertmanager_data:/alertmanager
+
+  # Log storage, fed by alloy. Keeps 14 days (the Privacy Policy relies on it).
+  loki:
+    networks:
+      - arium_network
+    image: grafana/loki:3.7.9
+    container_name: arium-loki
+    restart: unless-stopped
+    command: -config.file=/etc/loki/loki.yaml
+    volumes:
+      - ../observability/loki/loki.yaml:/etc/loki/loki.yaml:ro
+      - loki_data:/loki
+
+  # Tempo runs as UID 10001 but its data directory isn't in the image, so a
+  # fresh tempo_data volume is owned by root. This hands it over first.
+  tempo-init:
+    image: &tempo-image grafana/tempo:2.10.10
+    container_name: arium-tempo-init
+    network_mode: none
+    user: root
+    entrypoint: ["chown", "10001:10001", "/var/tempo"]
+    volumes:
+      - tempo_data:/var/tempo
+
+  # Trace storage. The backend sends spans to tempo:4318. Keeps 14 days.
+  tempo:
+    networks:
+      - arium_network
+    image: *tempo-image
+    container_name: arium-tempo
+    restart: unless-stopped
+    command: -config.file=/etc/tempo/tempo.yaml
+    volumes:
+      - ../observability/tempo/tempo.yaml:/etc/tempo/tempo.yaml:ro
+      - tempo_data:/var/tempo
+    depends_on:
+      tempo-init:
+        condition: service_completed_successfully
+
+  # Read-only gate to the Docker API for alloy: listing containers and reading
+  # their logs, nothing else (every other endpoint and all POSTs are refused).
+  docker-socket-proxy:
+    networks:
+      - docker_api
+    image: tecnativa/docker-socket-proxy:v0.5.0
+    container_name: arium-docker-socket-proxy
+    restart: unless-stopped
+    environment:
+      - CONTAINERS=1
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+
+  # Ships the arium-* containers' logs to Loki
+  # (../observability/alloy/config.alloy).
+  alloy:
+    networks:
+      - arium_network
+      - docker_api
+    image: grafana/alloy:v1.21.1
+    container_name: arium-alloy
+    restart: unless-stopped
+    command:
+      - run
+      - --server.http.listen-addr=0.0.0.0:12345
+      - --storage.path=/var/lib/alloy/data
+      - --disable-reporting
+      - /etc/alloy/config.alloy
+    volumes:
+      - ../observability/alloy/config.alloy:/etc/alloy/config.alloy:ro
+      # Read positions, so a restart doesn't resend logs.
+      - alloy_data:/var/lib/alloy/data
+    depends_on:
+      - docker-socket-proxy
+      - loki
+
+  # Dashboards and the Prometheus, Loki, Tempo and Alertmanager datasources are
+  # provisioned from devops/observability/grafana. Open http://localhost:3001 (admin / the
   # GRAFANA_ADMIN_PASSWORD from .env, default "admin").
   grafana:
     networks:
@@ -193,9 +295,16 @@ services:
       - GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH=/etc/grafana/dashboards/api.json
     depends_on:
       - prometheus
+      - loki
+      - tempo
+      - alertmanager
 
 volumes:
   mongo_data:
   collector_data:
   prometheus_data:
   grafana_data:
+  alertmanager_data:
+  loki_data:
+  tempo_data:
+  alloy_data:

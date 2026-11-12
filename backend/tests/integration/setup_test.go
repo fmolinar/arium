@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"go.opentelemetry.io/otel/metric/noop"
+	tracenoop "go.opentelemetry.io/otel/trace/noop"
 
 	"github.com/fmolinar/arium/backend/internal/config"
 	"github.com/fmolinar/arium/backend/internal/database"
@@ -47,7 +48,7 @@ func TestMain(m *testing.M) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	client, err := database.Connect(ctx, cfg.MongoURI)
+	client, err := database.Connect(ctx, cfg.MongoURI, tracenoop.NewTracerProvider())
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "integration tests require a reachable MongoDB (set TEST_MONGO_URI): %v\n", err)
 		os.Exit(1)
@@ -77,7 +78,7 @@ func TestMain(m *testing.M) {
 	}
 	ingestService = news.NewService(ingestRepo)
 
-	app := server.New(cfg, client, noop.NewMeterProvider().Meter("test"), userHandler, news.NewHandler(newsService))
+	app := server.New(cfg, client, noop.NewMeterProvider().Meter("test"), tracenoop.NewTracerProvider(), userHandler, news.NewHandler(newsService))
 	testServer = httptest.NewServer(app.Handler())
 
 	code := m.Run()

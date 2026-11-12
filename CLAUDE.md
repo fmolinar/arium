@@ -61,8 +61,9 @@ docker compose up -d --build
 ```
 
 Runs `app` (React, host port 3000 → container 4173), `backend` (Go API, 127.0.0.1:8080), `mongo` (127.0.0.1:27017, no auth),
-`collector`, `prometheus` (127.0.0.1:9090) and `grafana` (127.0.0.1:3001, user `admin`, password
-`GRAFANA_ADMIN_PASSWORD`, default `admin`). `JWT_SECRET` is required — compose refuses to start the backend without it.
+`collector`, `prometheus` (127.0.0.1:9090), `alertmanager` (127.0.0.1:9093), `loki`, `tempo` (plus a one-shot
+`tempo-init` that chowns its volume), `alloy`, `docker-socket-proxy` and `grafana` (127.0.0.1:3001, user `admin`,
+password `GRAFANA_ADMIN_PASSWORD`, default `admin`). `JWT_SECRET` is required — compose refuses to start the backend without it.
 
 ## Architecture
 
@@ -89,8 +90,9 @@ New backend features should follow this same model/repository/service/handler/ro
 `/terms` and `/privacy` (`arium/src/pages/Terms.jsx`, `Privacy.jsx`, shared layout `components/LegalPage.jsx`) are
 linked from the footer; the operator, contact URL and effective date live in `arium/src/legal/config.js`. The
 Privacy Policy states facts about the stack: no cookies or analytics, self-hosted fonts, `localStorage` only for
-theme/bookmarks, request logs with IP/user agent, account fields, Cloudflare and Atlas as processors, and log
-rotation (the `x-logging` anchor in `compose.yaml`). Change it, and bump `EFFECTIVE_DATE`, when any of those change.
+theme/bookmarks, request logs and traces with IP/user agent, account fields, Cloudflare and Atlas as processors,
+14-day log and trace retention (Loki `retention_period`, Tempo `block_retention`) and 30-day metrics
+(`PROMETHEUS_RETENTION`). Change it, and bump `EFFECTIVE_DATE`, when any of those change.
 
 ### Auth
 
@@ -128,7 +130,23 @@ call chain rather than accessed as a global.
   them, but a run that ends before the first scrape (usually the startup run) is still missed; the gauges cover it.
 - Prometheus names come out with unit suffixes: `http_server_request_duration_seconds`, `collector_runs_total`,
   `collector_last_success_timestamp_seconds`. Dashboards in `devops/observability/grafana/dashboards/*.json` use
-  those names and the datasource uid `prometheus`.
+  those names and the datasource uids `prometheus` and `loki`.
+- Tracing: `telemetry.NewTracing` exports OTLP/HTTP when `OTEL_EXPORTER_OTLP_ENDPOINT` is set (`http://tempo:4318`
+  in Compose), otherwise its `Provider()` is a noop. `middleware.Tracing` (otelhttp) is mounted first, outside
+  `Logging`, so access lines carry `trace_id`; it renames the span to `METHOD route` after routing, overwrites
+  `client.address` with the `CF-Connecting-IP` value (otelhttp reads `X-Forwarded-For`), records no HTTP metrics
+  (noop meter; `Metrics` does that), and treats the API as a public endpoint (client `traceparent` → link, not
+  parent). `database.Connect` takes the tracer provider for otelmongo spans (command bodies off); otelmongo also
+  emits `db_client_operation_duration_seconds` through the global meter provider. otelmongo has no tagged releases
+  for driver v2, so it's pinned to the pseudo-version of the contrib release commit matching `otelhttp`.
+  `server.New` and `database.Connect` take a tracer provider; tests pass `trace/noop`.
+- Logs: Alloy ships `arium-*` containers' stdout to Loki through `docker-socket-proxy` (read-only container
+  endpoints, on the internal `docker_api` network), labelled `container`, `compose_service` and `level`, with
+  `trace_id` as structured metadata. Grafana's Loki and Tempo datasources link logs and traces both ways.
+- SLOs and alerts: `devops/observability/prometheus/rules/slo.rules.yml` (availability 99.5% non-5xx, latency 99%
+  ≤ 500 ms, both over 30 days; multiwindow burn-rate alerts with a 20-request minimum, plus `APIDown`,
+  `CollectorDown`, `CollectorStale`, `CollectorNeverSucceeded`), unit-tested by `rules/tests/slo_test.yml`, which
+  matches labels and annotations exactly. Alertmanager has no notification integration yet.
 
 ### News collector
 
@@ -202,8 +220,10 @@ and fails if that run fails.
 
 `.github/workflows/deploy-local.yaml` runs on push to `main` (self-hosted runner): `test` job spins up Mongo,
 runs `gofmt`, `go vet`, `go build`, unit tests, and integration tests against it; `deploy` job (gated on `test`
-passing) rebuilds, checks `prometheus.yml` with `promtool`, redeploys the Docker Compose stack in place, and
-sends Prometheus a `SIGHUP` (its config is bind-mounted, so compose doesn't recreate it on a config-only change). There is no separate frontend CI job yet.
+passing) rebuilds, checks `prometheus.yml` and runs the alert rule tests with `promtool`, checks the Alertmanager, Loki
+and Alloy configs, redeploys the Docker Compose stack in place, then sends `SIGHUP` to Prometheus, Alertmanager and
+Alloy and restarts Loki, Tempo and Grafana (their configs are bind-mounted, so compose doesn't recreate them on a
+config-only change). There is no separate frontend CI job yet.
 
 The workflow runs only on pushes to `main`, so PRs get no CI. `main` requires a code-owner review; the owner merges
 with `gh pr merge --admin` (use `gh api -X PATCH repos/fmolinar/arium/pulls/<n> -f base=main` to retarget a PR,
@@ -222,16 +242,13 @@ Decisions already made (don't re-litigate): MongoDB stays the store for news (al
 data, a few thousand docs at most; no Postgres/Elasticsearch). Observability uses OpenTelemetry with the Grafana
 stack, not ELK (Elasticsearch is too heavy for the Docker Desktop host, and ELK is log-centric).
 
-Done: **structured logging** (`log/slog` JSON) and **metrics + Grafana** (OTel → Prometheus exporter, scraped by
-a `prometheus` service; Grafana with provisioned datasource and dashboards), as separate services rather than
-`grafana/otel-lgtm`. The collector's `collector_last_success_timestamp_seconds` should eventually replace the
-heartbeat-file healthcheck.
+Done: **structured logging**, **metrics + Grafana**, **logs in Loki** (via Alloy), **traces in Tempo** (API and
+MongoDB) and **SLOs with burn-rate alerting** (Prometheus rules → Alertmanager), all as separate services rather
+than `grafana/otel-lgtm`.
 
-3. **Logs in Loki**, shipped from container stdout (already JSON, with `service` and `request_id` fields).
-4. **Traces in Tempo**: OTel HTTP middleware on chi plus the MongoDB driver instrumentation, so a request is
-   traceable browser → API → Mongo. Logs pick up `trace_id`/`span_id` automatically once spans are in the context.
-5. **SLOs and alerting**: availability/latency SLOs for the API, burn-rate alerts, and a collector staleness alert
-   (no successful run in ~10h) via Grafana alerting or Alertmanager.
+Observability follow-ups: an Alertmanager notification integration, browser tracing (traces start at the API), a
+black-box probe of the public URL, Tempo's metrics generator, and replacing the collector's heartbeat-file
+healthcheck with `collector_last_success_timestamp_seconds`.
 
 Also open: frontend lint/build in CI, a post-deploy `/health` check in the deploy job, the planned
 `devops/jenkins/` work, and the rest of `devops/kubernetes/` (only the collector `CronJob` exists; see its README).

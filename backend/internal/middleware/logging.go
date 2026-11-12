@@ -94,6 +94,16 @@ func realIP(next http.Handler) http.Handler {
 	})
 }
 
+// trustedClientIP is the client address realIP resolves for r, for code that
+// runs outside it: CF-Connecting-IP when present, else the connection's address.
+func trustedClientIP(r *http.Request) string {
+	if ip := net.ParseIP(r.Header.Get("CF-Connecting-IP")); ip != nil {
+		return ip.String()
+	}
+
+	return clientIP(r)
+}
+
 // clientIP is r's client address without the port, after realIP.
 func clientIP(r *http.Request) string {
 	if host, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {

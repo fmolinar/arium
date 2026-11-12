@@ -10,4 +10,4 @@ export const OPERATOR = 'the arium maintainer (GitHub: @fmolinar)'
 // Where people can raise legal, privacy or takedown requests.
 export const CONTACT_URL = 'https://github.com/fmolinar/arium/issues'
 
-export const EFFECTIVE_DATE = 'October 12, 2026'
+export const EFFECTIVE_DATE = 'November 12, 2026'

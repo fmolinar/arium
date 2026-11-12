@@ -1,0 +1,14 @@
+# Shows Alertmanager's alerts and silences in Grafana's Alerting page. The
+# alert rules themselves are Prometheus's, listed there read-only.
+apiVersion: 1
+
+datasources:
+  - name: Alertmanager
+    uid: alertmanager
+    type: alertmanager
+    access: proxy
+    url: http://alertmanager:9093
+    editable: false
+    jsonData:
+      implementation: prometheus
+      handleGrafanaManagedAlerts: false

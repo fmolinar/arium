@@ -1,0 +1,101 @@
+# Unit tests for ../slo.rules.yml. Run from devops/docker:
+#   docker compose run --rm --no-deps --entrypoint promtool prometheus test rules /etc/prometheus/rules/tests/slo_test.yml
+rule_files:
+- ../slo.rules.yml
+evaluation_interval: 1m
+tests:
+- name: 10% errors burn the availability budget; fast responses don't touch latency
+  interval: 1m
+  input_series:
+  - series: http_server_request_duration_seconds_count{job="api",instance="backend:9464",http_request_method="GET",http_route="/api/v1/news/",http_response_status_code="200"}
+    values: 0+90x100
+  - series: http_server_request_duration_seconds_count{job="api",instance="backend:9464",http_request_method="GET",http_route="/api/v1/news/",http_response_status_code="500"}
+    values: 0+10x100
+  - series: http_server_request_duration_seconds_bucket{job="api",instance="backend:9464",http_request_method="GET",http_route="/api/v1/news/",http_response_status_code="200",le="0.5"}
+    values: 0+90x100
+  - series: http_server_request_duration_seconds_bucket{job="api",instance="backend:9464",http_request_method="GET",http_route="/api/v1/news/",http_response_status_code="500",le="0.5"}
+    values: 0+10x100
+  alert_rule_test:
+  - eval_time: 80m
+    alertname: APIAvailabilityBudgetBurn
+    exp_alerts:
+    - exp_labels:
+        severity: page
+        slo: availability
+        window: 1h
+      exp_annotations:
+        summary: API availability (non-5xx responses) is burning its error budget 14.4x too fast
+        description: At this rate the API spends 2% of the 30-day error budget in 1 hour. Check the Arium SLOs and Arium API dashboards.
+    - exp_labels:
+        severity: page
+        slo: availability
+        window: 6h
+      exp_annotations:
+        summary: API availability (non-5xx responses) is burning its error budget 6x too fast
+        description: At this rate the API spends 5% of the 30-day error budget in 6 hours. Check the Arium SLOs and Arium API dashboards.
+    - exp_labels:
+        severity: ticket
+        slo: availability
+        window: 1d
+      exp_annotations:
+        summary: API availability (non-5xx responses) is burning its error budget 3x too fast
+        description: At this rate the API spends 10% of the 30-day error budget in 1 day. Check the Arium SLOs and Arium API dashboards.
+  - eval_time: 80m
+    alertname: APILatencyBudgetBurn
+    exp_alerts: []
+- name: Under 20 requests per window, even 50% errors don't alert
+  interval: 1m
+  input_series:
+  - series: http_server_request_duration_seconds_count{job="api",instance="backend:9464",http_request_method="GET",http_route="/api/v1/news/",http_response_status_code="200"}
+    values: 0+0.1x100
+  - series: http_server_request_duration_seconds_count{job="api",instance="backend:9464",http_request_method="GET",http_route="/api/v1/news/",http_response_status_code="500"}
+    values: 0+0.1x100
+  - series: http_server_request_duration_seconds_bucket{job="api",instance="backend:9464",http_request_method="GET",http_route="/api/v1/news/",http_response_status_code="200",le="0.5"}
+    values: 0+0.1x100
+  - series: http_server_request_duration_seconds_bucket{job="api",instance="backend:9464",http_request_method="GET",http_route="/api/v1/news/",http_response_status_code="500",le="0.5"}
+    values: 0+0.1x100
+  alert_rule_test:
+  - eval_time: 80m
+    alertname: APIAvailabilityBudgetBurn
+    exp_alerts: []
+- name: Down targets
+  interval: 1m
+  input_series:
+  - series: up{job="api",instance="backend:9464"}
+    values: '0x10'
+  - series: up{job="collector",instance="collector:9464"}
+    values: 1x10
+  alert_rule_test:
+  - eval_time: 5m
+    alertname: APIDown
+    exp_alerts:
+    - exp_labels:
+        severity: page
+        job: api
+        instance: backend:9464
+      exp_annotations:
+        summary: Prometheus can't scrape the API
+        description: The backend container is down or its metrics listener isn't answering.
+  - eval_time: 5m
+    alertname: CollectorDown
+    exp_alerts: []
+- name: Last success over 10 hours ago
+  interval: 1m
+  input_series:
+  - series: collector_last_success_timestamp_seconds{job="collector",instance="collector:9464"}
+    values: '0x630'
+  alert_rule_test:
+  - eval_time: 9h
+    alertname: CollectorStale
+    exp_alerts: []
+  - eval_time: 10h20m
+    alertname: CollectorStale
+    exp_alerts:
+    - exp_labels:
+        severity: ticket
+      exp_annotations:
+        summary: No successful news collection in over 10 hours
+        description: Check the collector logs and the Arium Collector dashboard for failing sources or Mongo sync errors.
+  - eval_time: 10h20m
+    alertname: CollectorNeverSucceeded
+    exp_alerts: []

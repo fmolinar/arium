@@ -1,5 +1,6 @@
 // Package telemetry sets up OpenTelemetry metrics exported in the Prometheus
-// format, served on their own listener for Prometheus to scrape.
+// format, served on their own listener for Prometheus to scrape, and traces
+// exported over OTLP.
 package telemetry
 
 import (
