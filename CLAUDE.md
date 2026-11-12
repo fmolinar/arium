@@ -233,5 +233,5 @@ heartbeat-file healthcheck.
 5. **SLOs and alerting**: availability/latency SLOs for the API, burn-rate alerts, and a collector staleness alert
    (no successful run in ~10h) via Grafana alerting or Alertmanager.
 
-Also open: frontend lint/build in CI, a post-deploy `/health` check in the deploy job, and the planned
-`devops/jenkins/` and `devops/kubernetes/` work (the collector's schedule maps onto a `CronJob`).
+Also open: frontend lint/build in CI, a post-deploy `/health` check in the deploy job, the planned
+`devops/jenkins/` work, and the rest of `devops/kubernetes/` (only the collector `CronJob` exists; see its README).

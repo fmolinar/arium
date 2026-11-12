@@ -1,0 +1,13 @@
+# The collector's file store (raw payloads, articles, dedup state, manifests),
+# the Compose collector_data volume. 30 days of retention stays well under 1 GiB.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: collector-data
+  labels:
+    app.kubernetes.io/name: collector
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 1Gi
