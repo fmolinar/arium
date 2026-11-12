@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: arium
+  labels:
+    # Reject pods that run as root, escalate privileges or skip seccomp.
+    pod-security.kubernetes.io/enforce: restricted
