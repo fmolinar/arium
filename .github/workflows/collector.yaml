@@ -37,6 +37,8 @@ jobs:
       TF_INPUT: "false"
       TF_VAR_aws_region: ${{ vars.AWS_REGION }}
       TF_VAR_mongo_uri: ${{ secrets.TF_VAR_MONGO_URI }}
+      # Optional; a secret so the address is masked in this public repo's logs.
+      TF_VAR_alarm_email: ${{ secrets.ALARM_EMAIL }}
       TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
 
     steps:
