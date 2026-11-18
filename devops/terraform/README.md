@@ -77,6 +77,7 @@ Then set these on GitHub (repo → Settings → Secrets and variables → Action
 | `TF_STATE_BUCKET` | variable | `terraform output -raw state_bucket` |
 | `AWS_REGION` | variable | the region, e.g. `us-west-2` |
 | `AWS_ROLE_ARN` | variable | the OIDC role's ARN |
+| `ALARM_EMAIL` | secret (optional) | where alarm emails go (`alarm_email`); unset, a CI apply removes the email subscription |
 | `TF_VAR_MONGO_URI` | secret | the Atlas connection string |
 
 ## 2. Deploy from GitHub Actions
