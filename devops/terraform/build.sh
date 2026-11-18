@@ -19,7 +19,7 @@ else
   modcache="${GOMODCACHE:-$HOME/go/pkg/mod}"
   mkdir -p "$modcache"
   docker run --rm -u "$(id -u):$(id -g)" -e HOME=/tmp -e GOPATH=/tmp/go -e GOCACHE=/tmp/gocache \
-    -v "$modcache:/tmp/go/pkg/mod" -v "$backend:/src" -v "$here/build:/out" -w /src golang:1.25 sh -c "$build"
+    -v "$modcache:/tmp/go/pkg/mod" -v "$backend:/src" -v "$here/build:/out" -w /src golang:1.27 sh -c "$build"
 fi
 
 echo "built $here/build/bootstrap"

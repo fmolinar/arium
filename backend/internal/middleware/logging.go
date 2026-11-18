@@ -12,12 +12,12 @@ import (
 )
 
 // Logging assigns each request an ID (echoed in X-Request-Id), resolves the
-// client IP and writes one JSON access log line per request through the
-// default slog logger. Mount it first so every later log line in the request
-// carries the request ID.
+// client IP (see realIP) and writes one JSON access log line per request
+// through the default slog logger. Mount it first so every later log line in
+// the request carries the request ID.
 func Logging(next http.Handler) http.Handler {
 	return chimiddleware.RequestID(
-		chimiddleware.RealIP(
+		realIP(
 			http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("X-Request-Id", chimiddleware.GetReqID(r.Context()))
 
@@ -78,8 +78,23 @@ func Recoverer(next http.Handler) http.Handler {
 	})
 }
 
-// clientIP is r's client address without the port. RealIP has already
-// replaced RemoteAddr with the proxy-reported IP, if any.
+// realIP sets RemoteAddr to the CF-Connecting-IP header when there is one.
+// Requests from the internet reach the API through Cloudflare, which always
+// overwrites that header with the real client address. It deliberately
+// ignores X-Forwarded-For, X-Real-IP and True-Client-IP (chi's RealIP trusts
+// them): any client can set those, and would get a fresh rate limit and a
+// forged address in the logs.
+func realIP(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if ip := net.ParseIP(r.Header.Get("CF-Connecting-IP")); ip != nil {
+			r.RemoteAddr = ip.String()
+		}
+
+		next.ServeHTTP(w, r)
+	})
+}
+
+// clientIP is r's client address without the port, after realIP.
 func clientIP(r *http.Request) string {
 	if host, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
 		return host

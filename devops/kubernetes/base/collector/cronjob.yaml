@@ -1,0 +1,87 @@
+# News collector as a CronJob: one `collector -once` per scheduled time, the
+# same as the Compose service's -schedule loop (00:00, 08:00, 16:00 UTC) but
+# scheduled by Kubernetes, so there's no long-running process, heartbeat file or
+# -healthcheck. A missed or failed run shows up in the Job history and in
+# kube-state-metrics (kube_cronjob_status_last_successful_time).
+#
+# Run once now (the Compose service's COLLECTOR_RUN_ON_START):
+#   kubectl -n arium create job --from=cronjob/collector collector-manual-$(date +%s)
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: collector
+  labels:
+    app.kubernetes.io/name: collector
+spec:
+  schedule: "0 0,8,16 * * *"
+  timeZone: UTC
+  # Runs share the collector-data volume and its state/.lock; a second run
+  # would only fail with ErrLocked, so don't start one.
+  concurrencyPolicy: Forbid
+  # A run that couldn't start within 10 minutes of its time (cluster down,
+  # previous run still going) is skipped, like a missed run in schedule mode.
+  startingDeadlineSeconds: 600
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    metadata:
+      labels:
+        app.kubernetes.io/name: collector
+    spec:
+      # The CLI exits non-zero only when every source failed or the Mongo sync
+      # failed, so a retry is worth it; deduplication makes it safe.
+      backoffLimit: 2
+      # Kill a hung run. A normal one takes well under a minute.
+      activeDeadlineSeconds: 900
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: collector
+        spec:
+          # Failed pods are kept (up to failedJobsHistoryLimit) for their logs.
+          restartPolicy: Never
+          securityContext:
+            # The image's non-root `app` user. The image names the user rather
+            # than a UID, so runAsNonRoot needs it spelled out here; fsGroup
+            # makes the volume writable whatever owns it.
+            runAsNonRoot: true
+            runAsUser: 100
+            runAsGroup: 101
+            fsGroup: 101
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: collector
+              image: arium-collector:latest
+              imagePullPolicy: IfNotPresent
+              args: ["-once"]
+              envFrom:
+                - configMapRef:
+                    name: collector-config
+                # MONGO_URI (and optionally MONGO_DB). Optional: without it the
+                # run only writes to the volume and skips the Mongo sync.
+                - secretRef:
+                    name: collector-mongo
+                    optional: true
+              resources:
+                requests:
+                  cpu: 50m
+                  memory: 64Mi
+                limits:
+                  memory: 256Mi
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: ["ALL"]
+              volumeMounts:
+                - name: data
+                  mountPath: /data
+                - name: tmp
+                  mountPath: /tmp
+          volumes:
+            - name: data
+              persistentVolumeClaim:
+                claimName: collector-data
+            - name: tmp
+              emptyDir: {}

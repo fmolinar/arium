@@ -1,7 +1,7 @@
 variable "aws_region" {
-  description = "AWS region. Pick the one closest to the MongoDB Atlas cluster."
+  description = "AWS region. Pick the one closest to the MongoDB Atlas cluster, and the same as the bootstrap stack's."
   type        = string
-  default     = "us-east-1"
+  default     = "us-west-2"
 }
 
 variable "project" {
@@ -76,6 +76,12 @@ variable "log_retention_days" {
   default     = 14
 }
 
+variable "archive_enabled" {
+  description = "Copy each run's raw payloads and manifest to the archive bucket the bootstrap stack creates."
+  type        = bool
+  default     = true
+}
+
 variable "lambda_binary" {
   description = "Path to the linux/arm64 collector binary built by build.sh."
   type        = string
@@ -98,18 +104,6 @@ variable "source_failure_runs" {
   description = "Consecutive runs in which some source must fail before the source alarm fires."
   type        = number
   default     = 3
-}
-
-variable "permissions_boundary_arn" {
-  description = "IAM permissions boundary for the function and scheduler roles. The policy is created outside this stack (the bootstrap stack). Null for none."
-  type        = string
-  default     = null
-}
-
-variable "archive_bucket" {
-  description = "S3 bucket (created outside this stack) the collector writes run manifests and raw payloads to, as COLLECTOR_ARCHIVE_BUCKET. Empty disables archiving."
-  type        = string
-  default     = ""
 }
 
 variable "slack_team_id" {

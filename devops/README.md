@@ -1,16 +1,16 @@
 # DevOps (`devops/`)
 
 This directory holds everything needed to build, deploy and run Arium. Today that's Docker Compose, deployed by
-GitHub Actions to a self-hosted runner. The `jenkins/` and `kubernetes/` directories are placeholders for
-upcoming work and aren't in the repository yet.
+GitHub Actions to a self-hosted runner. `kubernetes/` holds Kustomize manifests, so far for the collector only, and `jenkins/`
+is a placeholder for upcoming work that isn't in the repository yet.
 
 | Directory | Status | Contents |
 |---|---|---|
 | [`docker/`](docker) | in use | Dockerfiles for the frontend, API and collector, and the Compose stack |
 | [`observability/`](observability) | in use | Prometheus scrape config, Grafana datasource and dashboards |
-| [`terraform/`](terraform) | in use | The news collector on AWS Lambda, scheduled by EventBridge, writing to MongoDB Atlas |
+| [`terraform/`](terraform) | in use | The news collector on AWS Lambda, scheduled by EventBridge, writing to MongoDB Atlas and archiving to S3; a `bootstrap/` stack for the state and archive buckets and CI permissions |
 | `jenkins/` | planned | Jenkins pipeline |
-| `kubernetes/` | planned | Kubernetes manifests (the collector's schedule maps naturally onto a `CronJob`) |
+| [`kubernetes/`](kubernetes) | in progress | Kustomize manifests: the collector as a `CronJob`; the rest of the stack is planned |
 
 ## Software stack
 

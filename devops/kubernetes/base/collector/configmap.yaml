@@ -1,0 +1,16 @@
+# Collector settings, the same COLLECTOR_* variables as the Compose service.
+# The schedule lives on the CronJob, and there's no COLLECTOR_METRICS_ADDRESS:
+# a one-shot run exits before Prometheus could scrape it.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: collector-config
+  labels:
+    app.kubernetes.io/name: collector
+data:
+  COLLECTOR_OUT_DIR: /data
+  COLLECTOR_RETENTION: 720h
+  COLLECTOR_SINCE: 168h
+  COLLECTOR_SOURCE_TIMEOUT: 15s
+  MONGO_DB: arium
+  LOG_LEVEL: info

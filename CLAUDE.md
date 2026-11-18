@@ -10,7 +10,7 @@ Compose (`devops/docker/`).
 
 ## Commands
 
-### Backend (`backend/`, Go 1.25)
+### Backend (`backend/`, Go 1.26+, toolchain pinned to go1.27.2)
 
 ```sh
 cd backend
@@ -60,7 +60,7 @@ cp .env.example .env   # set JWT_SECRET
 docker compose up -d --build
 ```
 
-Runs `app` (React, host port 3000 → container 4173), `backend` (Go API, port 8080), `mongo` (port 27017),
+Runs `app` (React, host port 3000 → container 4173), `backend` (Go API, 127.0.0.1:8080), `mongo` (127.0.0.1:27017, no auth),
 `collector`, `prometheus` (127.0.0.1:9090) and `grafana` (127.0.0.1:3001, user `admin`, password
 `GRAFANA_ADMIN_PASSWORD`, default `admin`). `JWT_SECRET` is required — compose refuses to start the backend without it.
 
@@ -84,10 +84,20 @@ Each feature (`user`, `news`) follows a fixed layering, all under `internal/<fea
 New backend features should follow this same model/repository/service/handler/routes split and be mounted from
 `server.go` the same way `user` is.
 
+### Legal pages
+
+`/terms` and `/privacy` (`arium/src/pages/Terms.jsx`, `Privacy.jsx`, shared layout `components/LegalPage.jsx`) are
+linked from the footer; the operator, contact URL and effective date live in `arium/src/legal/config.js`. The
+Privacy Policy states facts about the stack: no cookies or analytics, self-hosted fonts, `localStorage` only for
+theme/bookmarks, request logs with IP/user agent, account fields, Cloudflare and Atlas as processors, and log
+rotation (the `x-logging` anchor in `compose.yaml`). Change it, and bump `EFFECTIVE_DATE`, when any of those change.
+
 ### Auth
 
 JWT (HS256) issued by `middleware.NewToken` on login/register, carrying the user ID as `Subject` and a `Role`
-custom claim. `middleware.Auth(cfg)` is applied per-route-group (see `user.Routes`), not globally — validates
+custom claim. `/users/register` and `/users/login` are rate limited per client IP (`middleware.RateLimit`, 10/min,
+burst 10), all `/users` routes cap bodies at 16 KiB and send `Cache-Control: no-store`, and requests are validated
+in `user/model.go` (emails trimmed and lowercased, password 8–72 bytes). `middleware.Auth(cfg)` is applied per-route-group (see `user.Routes`), not globally — validates
 the bearer token and injects the user ID/role into the request context, readable via `middleware.UserID(ctx)` /
 `middleware.UserRole(ctx)`.
 
@@ -103,8 +113,9 @@ call chain rather than accessed as a global.
   default, at `LOG_LEVEL` (default info). That also routes the stdlib `log` package through it. Its handler adds
   `request_id` (chi) and `trace_id`/`span_id` (OTel span in the context) to any record logged with a context, so
   use `slog.InfoContext(r.Context(), ...)` in request code. `logging.Fatal` replaces `log.Fatal`.
-- `middleware.Logging` = chi `RequestID` + `RealIP` + one `"msg":"request"` access line per request (route is the
-  chi pattern); it also sets `X-Request-Id`. `middleware.Recoverer` replaces chi's, logging the panic as one JSON line.
+- `middleware.Logging` = chi `RequestID` + `realIP` + one `"msg":"request"` access line per request (route is the
+  chi pattern); it also sets `X-Request-Id`. `realIP` trusts only `CF-Connecting-IP` (Cloudflare overwrites it), never
+  `X-Forwarded-For`/`X-Real-IP`/`True-Client-IP`, which clients can forge; don't swap in chi's `RealIP`. `middleware.Recoverer` replaces chi's, logging the panic as one JSON line.
 - `internal/telemetry.NewMetrics(service)` builds the OTel meter provider with the Prometheus exporter (its own
   registry plus Go/process collectors). `Serve(ctx, addr)` exposes `/metrics` on a separate listener (`METRICS_ADDRESS`
   for the API, `-metrics-address`/`COLLECTOR_METRICS_ADDRESS` for the collector; empty disables; `:9464` in Compose).
@@ -171,7 +182,15 @@ then syncs the stored articles into Mongo's `news` collection, which the API ser
   one collection per invocation (EventBridge Scheduler) in Mongo-only mode: no file store, `news.Service.Ingest`
   inserts articles whose `_id` and `title_key` aren't stored yet (never overwriting, so `fetched_at` stays first-seen)
   and deletes expired ones. The URI comes from `MONGO_URI` or the SSM SecureString named by `MONGO_URI_PARAMETER`.
-  Build with `devops/terraform/build.sh`. `aws-lambda-go` is pinned to v1.54.0 (v1.55+ needs Go 1.26).
+  Build with `devops/terraform/build.sh`. `aws-lambda-go` is at v1.54.0 (v1.55+ needs Go 1.26, which go.mod now requires).
+- With `COLLECTOR_ARCHIVE_BUCKET` set, the Lambda also copies each run's raw payloads and manifest to S3
+  (`cmd/collector/archive.go`) under the file store's keys (`collector.RawKey`/`ManifestKey`). It's best-effort: a
+  failed write is logged, never fails the run, and happens even when the Mongo insert failed.
+- Terraform: `devops/terraform/bootstrap/` (applied once by hand, local state) owns the state bucket
+  (`arium-tfstate-<account>`), the archive bucket, the `arium-collector-boundary` permissions boundary and the
+  GitHub OIDC role's inline policy. The collector stack (`devops/terraform/`) keeps state in that bucket
+  (`-backend-config=bucket=...`, `use_lockfile`) and derives the bucket and boundary names from the same prefix.
+  Every IAM role it creates must carry the boundary, or CI can't create it.
 - To show the Lambda's data, the Compose backend reads `${MONGO_URI}` (the `MONGO_URI` GitHub secret in the deploy
   job; unset falls back to the local `mongo`). The Compose collector always syncs to the local `mongo`, so its
   upserting `Import` never shares a collection with the Lambda's `Ingest`.
@@ -179,6 +198,11 @@ then syncs the stored articles into Mongo's `news` collection, which the API ser
   for storage.
 
 ### CI/CD
+
+`.github/workflows/collector.yaml` is manual (`workflow_dispatch`: plan, apply or destroy of `devops/terraform`) on
+GitHub-hosted runners, in the `aws` environment, with AWS credentials from OIDC (`vars.AWS_ROLE_ARN`,
+`vars.AWS_REGION`, `vars.TF_STATE_BUCKET`, `secrets.TF_VAR_MONGO_URI`). After an apply it invokes the function once
+and fails if that run fails.
 
 `.github/workflows/deploy-local.yaml` runs on push to `main` (self-hosted runner): `test` job spins up Mongo,
 runs `gofmt`, `go vet`, `go build`, unit tests, and integration tests against it; `deploy` job (gated on `test`
@@ -213,5 +237,5 @@ heartbeat-file healthcheck.
 5. **SLOs and alerting**: availability/latency SLOs for the API, burn-rate alerts, and a collector staleness alert
    (no successful run in ~10h) via Grafana alerting or Alertmanager.
 
-Also open: frontend lint/build in CI, a post-deploy `/health` check in the deploy job, and the planned
-`devops/jenkins/` and `devops/kubernetes/` work (the collector's schedule maps onto a `CronJob`).
+Also open: frontend lint/build in CI, a post-deploy `/health` check in the deploy job, the planned
+`devops/jenkins/` work, and the rest of `devops/kubernetes/` (only the collector `CronJob` exists; see its README).

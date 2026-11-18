@@ -1,4 +1,5 @@
 import { NavLink, Outlet } from 'react-router-dom'
+import Logo from './Logo'
 import ThemeToggle from './ThemeToggle'
 
 const NAV_LINKS = [
@@ -19,8 +20,11 @@ export default function Layout() {
     <div className="flex min-h-screen flex-col bg-bg text-text">
       <header className="border-b border-border">
         <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
-          <NavLink to="/" className="font-mono text-lg font-bold text-text-h">
-            arium<span className="text-accent">_</span>
+          <NavLink to="/" className="flex items-center gap-2.5 font-mono text-lg font-bold text-text-h">
+            <Logo />
+            <span>
+              arium<span className="text-accent">_</span>
+            </span>
           </NavLink>
 
           <nav className="flex items-center gap-6">
@@ -41,6 +45,14 @@ export default function Layout() {
       <footer className="border-t border-border">
         <div className="mx-auto flex max-w-6xl flex-col gap-1 px-6 py-6 font-mono text-xs text-text sm:flex-row sm:items-center sm:justify-between">
           <span>© {new Date().getFullYear()} arium</span>
+          <nav className="flex gap-4">
+            <NavLink to="/terms" className="hover:text-accent">
+              Terms
+            </NavLink>
+            <NavLink to="/privacy" className="hover:text-accent">
+              Privacy
+            </NavLink>
+          </nav>
           <span>DevOps · SRE · GitOps · DevSecOps</span>
         </div>
       </footer>

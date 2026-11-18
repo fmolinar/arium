@@ -1,0 +1,10 @@
+# Single-node cluster on the Docker host (Docker Desktop's Kubernetes, or
+# k3d/kind with the image imported). Images come from the local
+# `docker compose build`, so nothing is pulled from a registry.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../base
+images:
+  - name: arium-collector
+    newTag: latest

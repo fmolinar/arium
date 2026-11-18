@@ -2,8 +2,6 @@
 # URI through the environment instead of this file:
 #   export TF_VAR_mongo_uri='mongodb+srv://...'
 
-aws_region = "us-east-1"
+aws_region = "us-west-2"
 # schedule_enabled = false
 # alarm_email      = "you@example.com"
-# permissions_boundary_arn = "arn:aws:iam::<account>:policy/arium-collector-boundary"
-# archive_bucket           = "arium-collector-archive-<account>"

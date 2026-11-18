@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -51,6 +52,27 @@ func NewRun(now time.Time) Run {
 
 func (r Run) day() string {
 	return r.StartedAt.UTC().Format(time.DateOnly)
+}
+
+// RawKey is where a source's payload from run is stored, relative to the store
+// root and slash-separated: raw/<source>/<YYYY-MM-DD>/<runID>.<ext>. The S3
+// archive uses the same keys.
+func RawKey(run Run, source, ext string) (string, error) {
+	if !ValidName(run.ID) || !ValidName(source) || !ValidName(ext) {
+		return "", fmt.Errorf("invalid run ID %q, source name %q or extension %q", run.ID, source, ext)
+	}
+
+	return path.Join("raw", source, run.day(), run.ID+"."+ext), nil
+}
+
+// ManifestKey is where a run's manifest is stored, relative to the store root
+// and slash-separated: runs/<runID>.json.
+func ManifestKey(runID string) (string, error) {
+	if !ValidName(runID) {
+		return "", fmt.Errorf("invalid run ID %q", runID)
+	}
+
+	return path.Join("runs", runID+".json"), nil
 }
 
 // SourceResult is one source's outcome within a run.
@@ -136,9 +158,10 @@ const (
 // WriteRaw stores a source's upstream payload and returns its path relative to
 // the store root. If the payload is byte-for-byte identical to the last one
 // stored for the source, nothing is written and unchanged is true.
-func (s *Store) WriteRaw(run Run, source string, raw Raw) (path string, unchanged bool, err error) {
-	if !ValidName(run.ID) || !ValidName(source) || !ValidName(raw.Ext) {
-		return "", false, fmt.Errorf("invalid run ID %q, source name %q or extension %q", run.ID, source, raw.Ext)
+func (s *Store) WriteRaw(run Run, source string, raw Raw) (rel string, unchanged bool, err error) {
+	rel, err = RawKey(run, source, raw.Ext)
+	if err != nil {
+		return "", false, err
 	}
 
 	state := map[string]rawState{}
@@ -153,8 +176,7 @@ func (s *Store) WriteRaw(run Run, source string, raw Raw) (path string, unchange
 		return "", true, nil
 	}
 
-	rel := filepath.Join("raw", source, run.day(), run.ID+"."+raw.Ext)
-	if err := s.writeFile(rel, raw.Data); err != nil {
+	if err := s.writeFile(filepath.FromSlash(rel), raw.Data); err != nil {
 		return "", false, err
 	}
 
@@ -272,8 +294,9 @@ func (s *Store) ReadArticles() ([]Article, error) {
 
 // WriteManifest stores the run summary.
 func (s *Store) WriteManifest(m Manifest) error {
-	if !ValidName(m.RunID) {
-		return fmt.Errorf("invalid run ID %q", m.RunID)
+	rel, err := ManifestKey(m.RunID)
+	if err != nil {
+		return err
 	}
 
 	data, err := json.MarshalIndent(m, "", "  ")
@@ -281,7 +304,7 @@ func (s *Store) WriteManifest(m Manifest) error {
 		return fmt.Errorf("encode manifest: %w", err)
 	}
 
-	return s.writeFile(filepath.Join("runs", m.RunID+".json"), append(data, '\n'))
+	return s.writeFile(filepath.FromSlash(rel), append(data, '\n'))
 }
 
 // PruneResult counts what Prune removed.
