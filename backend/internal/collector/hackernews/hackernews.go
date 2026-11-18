@@ -6,9 +6,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/fmolinar/arium/backend/internal/collector"
@@ -21,6 +23,17 @@ const (
 	defaultBaseURL   = "https://hn.algolia.com/api/v1"
 	defaultMinPoints = 20
 	defaultHits      = 30
+
+	// maxConcurrent bounds the queries in flight at once. Sequential queries
+	// didn't fit in the per-source timeout from Lambda, where each Algolia
+	// round trip is much slower than from a desktop.
+	maxConcurrent = 4
+
+	// A query gets maxAttempts tries of at most QueryTimeout each, so one hung
+	// connection costs a retry instead of the whole source's timeout.
+	maxAttempts         = 2
+	defaultQueryTimeout = 20 * time.Second
+	defaultRetryDelay   = time.Second
 )
 
 // Query is one keyword search. Tags are applied to every story it returns,
@@ -42,6 +55,10 @@ type Config struct {
 	// matches aren't downloaded just to be dropped as stale. The collector CLI
 	// sets it from -since.
 	MaxAge time.Duration `json:"-"`
+	// QueryTimeout bounds each attempt at a query. Defaults to 20s.
+	QueryTimeout time.Duration `json:"-"`
+	// RetryDelay is the wait before retrying a failed query. Defaults to 1s.
+	RetryDelay time.Duration `json:"-"`
 	// BaseURL overrides the Algolia API root; used in tests.
 	BaseURL string `json:"-"`
 	// Now defaults to time.Now; used in tests.
@@ -68,6 +85,12 @@ func New(cfg Config, client *http.Client) *Source {
 	if cfg.Now == nil {
 		cfg.Now = time.Now
 	}
+	if cfg.QueryTimeout == 0 {
+		cfg.QueryTimeout = defaultQueryTimeout
+	}
+	if cfg.RetryDelay == 0 {
+		cfg.RetryDelay = defaultRetryDelay
+	}
 
 	return &Source{cfg: cfg, client: client}
 }
@@ -90,31 +113,56 @@ type hit struct {
 	StoryText   string `json:"story_text"`
 }
 
-// Fetch runs the queries in order. Any failed query fails the whole source so
-// the manifest shows it; the stored raw payload maps each query to its
-// response body. A story matched by several queries is returned once, with
-// the tags of all of them.
+// Fetch runs the queries concurrently, at most maxConcurrent at a time. A
+// query that still fails after its retry is logged and left out, so a slow
+// query (or the source timeout cutting off the last ones) doesn't discard the
+// others' stories; the source fails only when every query does. The stored
+// raw payload maps each successful query to its response body. A story
+// matched by several queries is returned once, with the tags of all of them,
+// and the merge follows query order so the result doesn't depend on timing.
 func (s *Source) Fetch(ctx context.Context) (collector.Raw, []collector.Article, error) {
+	bodies := make([]json.RawMessage, len(s.cfg.Queries))
+	hits := make([][]hit, len(s.cfg.Queries))
+	errs := make([]error, len(s.cfg.Queries))
+
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, maxConcurrent)
+	for i, q := range s.cfg.Queries {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+
+			bodies[i], hits[i], errs[i] = s.searchWithRetry(ctx, q.Query)
+		}()
+	}
+	wg.Wait()
+
+	var failed []error
+	for i, err := range errs {
+		if err != nil {
+			failed = append(failed, err)
+			slog.WarnContext(ctx, "hackernews query failed", "query", s.cfg.Queries[i].Query, "error", err)
+		}
+	}
+	if len(failed) > 0 && len(failed) == len(s.cfg.Queries) {
+		return collector.Raw{}, nil, fmt.Errorf("all %d queries failed: %w", len(failed), failed[0])
+	}
+
 	responses := make(map[string]json.RawMessage, len(s.cfg.Queries))
 	var articles []collector.Article
 	index := map[string]int{} // objectID → position in articles
 
-	for _, q := range s.cfg.Queries {
-		body, err := collector.HTTPGet(ctx, s.client, s.searchURL(q.Query), "application/json")
-		if err != nil {
-			return collector.Raw{}, nil, fmt.Errorf("query %q: %w", q.Query, err)
+	for i, q := range s.cfg.Queries {
+		if errs[i] != nil {
+			continue
 		}
+		responses[q.Query] = bodies[i]
 
-		var resp searchResponse
-		if err := json.Unmarshal(body, &resp); err != nil {
-			return collector.Raw{}, nil, fmt.Errorf("query %q: decode response: %w", q.Query, err)
-		}
-
-		responses[q.Query] = body
-
-		for _, h := range resp.Hits {
-			if i, ok := index[h.ObjectID]; ok {
-				articles[i].Tags = append(articles[i].Tags, q.Tags...)
+		for _, h := range hits[i] {
+			if j, ok := index[h.ObjectID]; ok {
+				articles[j].Tags = append(articles[j].Tags, q.Tags...)
 				continue
 			}
 
@@ -129,6 +177,56 @@ func (s *Source) Fetch(ctx context.Context) (collector.Raw, []collector.Article,
 	}
 
 	return collector.Raw{Data: raw, Ext: "json"}, articles, nil
+}
+
+// searchWithRetry runs one query, retrying it once if an attempt fails while
+// ctx is still live, and logs how long each attempt took.
+func (s *Source) searchWithRetry(ctx context.Context, query string) (json.RawMessage, []hit, error) {
+	var err error
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		if attempt > 1 {
+			select {
+			case <-ctx.Done():
+				return nil, nil, err
+			case <-time.After(s.cfg.RetryDelay):
+			}
+		}
+
+		attemptCtx, cancel := context.WithTimeout(ctx, s.cfg.QueryTimeout)
+		start := time.Now()
+		var body json.RawMessage
+		var hits []hit
+		body, hits, err = s.search(attemptCtx, query)
+		cancel()
+
+		attrs := []any{"query", query, "attempt", attempt, "duration_ms", time.Since(start).Milliseconds()}
+		if err == nil {
+			slog.InfoContext(ctx, "hackernews query", append(attrs, "hits", len(hits))...)
+			return body, hits, nil
+		}
+		slog.InfoContext(ctx, "hackernews query attempt failed", append(attrs, "error", err)...)
+
+		if ctx.Err() != nil {
+			break // the source's own deadline, not this attempt's; don't retry
+		}
+	}
+
+	return nil, nil, err
+}
+
+// search runs one query and returns the response body and its hits.
+func (s *Source) search(ctx context.Context, query string) (json.RawMessage, []hit, error) {
+	body, err := collector.HTTPGet(ctx, s.client, s.searchURL(query), "application/json")
+	if err != nil {
+		return nil, nil, fmt.Errorf("query %q: %w", query, err)
+	}
+
+	var resp searchResponse
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return nil, nil, fmt.Errorf("query %q: decode response: %w", query, err)
+	}
+
+	return body, resp.Hits, nil
 }
 
 func (s *Source) searchURL(query string) string {

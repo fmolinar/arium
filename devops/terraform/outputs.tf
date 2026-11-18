@@ -18,3 +18,8 @@ output "invoke_command" {
   description = "Run the collector once and print its logs."
   value       = "aws lambda invoke --region ${var.aws_region} --function-name ${aws_lambda_function.collector.function_name} --log-type Tail --query LogResult --output text /dev/null | base64 -d"
 }
+
+output "alerts_topic_arn" {
+  description = "SNS topic the collector alarms publish to; subscribe more endpoints here."
+  value       = aws_sns_topic.alerts.arn
+}

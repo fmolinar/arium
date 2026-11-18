@@ -4,3 +4,4 @@
 
 aws_region = "us-west-2"
 # schedule_enabled = false
+# alarm_email      = "you@example.com"

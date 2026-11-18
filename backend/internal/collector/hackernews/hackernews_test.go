@@ -157,23 +157,123 @@ func TestSearchParametersMaxAge(t *testing.T) {
 func TestDefaults(t *testing.T) {
 	src := New(Config{}, http.DefaultClient)
 
-	if src.cfg.BaseURL != "https://hn.algolia.com/api/v1" || src.cfg.MinPoints != 20 || src.cfg.HitsPerQuery != 30 || src.cfg.Now == nil {
+	if src.cfg.BaseURL != "https://hn.algolia.com/api/v1" || src.cfg.MinPoints != 20 || src.cfg.HitsPerQuery != 30 || src.cfg.Now == nil ||
+		src.cfg.QueryTimeout != 20*time.Second || src.cfg.RetryDelay != time.Second {
 		t.Errorf("defaults = %+v", src.cfg)
 	}
 }
 
-func TestFetchFailsIfAnyQueryFails(t *testing.T) {
+func TestFetchKeepsResultsOfQueriesThatSucceed(t *testing.T) {
 	fake := &fakeAlgolia{}
 	srv := fake.start(t)
 
 	src := New(Config{
-		Queries: []Query{{Query: "kubernetes"}, {Query: "missing-fixture"}},
-		BaseURL: srv.URL,
+		Queries:    []Query{{Query: "kubernetes"}, {Query: "missing-fixture"}},
+		BaseURL:    srv.URL,
+		RetryDelay: time.Millisecond,
+	}, srv.Client())
+
+	raw, articles, err := src.Fetch(context.Background())
+	if err != nil {
+		t.Fatalf("Fetch: %v, want the kubernetes results despite the failed query", err)
+	}
+	if len(articles) != 2 {
+		t.Errorf("got %d articles, want the 2 from kubernetes", len(articles))
+	}
+
+	var stored map[string]json.RawMessage
+	if err := json.Unmarshal(raw.Data, &stored); err != nil || len(stored) != 1 || stored["kubernetes"] == nil {
+		t.Errorf("raw payload keys = %v (err %v), want only kubernetes", slices.Sorted(maps.Keys(stored)), err)
+	}
+
+	attempts := 0
+	for _, r := range fake.requests {
+		if r.Get("query") == "missing-fixture" {
+			attempts++
+		}
+	}
+	if attempts != maxAttempts {
+		t.Errorf("failed query was tried %d times, want %d", attempts, maxAttempts)
+	}
+}
+
+func TestFetchFailsIfEveryQueryFails(t *testing.T) {
+	fake := &fakeAlgolia{}
+	srv := fake.start(t)
+
+	src := New(Config{
+		Queries:    []Query{{Query: "missing-fixture"}, {Query: "also-missing"}},
+		BaseURL:    srv.URL,
+		RetryDelay: time.Millisecond,
 	}, srv.Client())
 
 	_, _, err := src.Fetch(context.Background())
-	if err == nil || !strings.Contains(err.Error(), `"missing-fixture"`) {
-		t.Errorf("err = %v, want failure naming the query", err)
+	if err == nil || !strings.Contains(err.Error(), "all 2 queries failed") {
+		t.Errorf("err = %v, want every query reported as failed", err)
+	}
+}
+
+func TestFetchRetriesQueryThatTimesOut(t *testing.T) {
+	var mu sync.Mutex
+	calls := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		calls++
+		first := calls == 1
+		mu.Unlock()
+
+		if first {
+			<-r.Context().Done() // hang until the attempt times out
+			return
+		}
+		_, _ = w.Write([]byte(`{"hits":[{"objectID":"1","title":"Kubernetes 2.0","url":"https://example.com/k2"}]}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	src := New(Config{
+		Queries:      []Query{{Query: "kubernetes"}},
+		BaseURL:      srv.URL,
+		QueryTimeout: 50 * time.Millisecond,
+		RetryDelay:   time.Millisecond,
+	}, srv.Client())
+
+	_, articles, err := src.Fetch(context.Background())
+	if err != nil {
+		t.Fatalf("Fetch: %v, want the retry to succeed", err)
+	}
+	if len(articles) != 1 || calls != 2 {
+		t.Errorf("got %d articles after %d calls, want 1 after 2", len(articles), calls)
+	}
+}
+
+func TestFetchDoesNotRetryAfterSourceDeadline(t *testing.T) {
+	var mu sync.Mutex
+	calls := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		calls++
+		mu.Unlock()
+		<-r.Context().Done()
+	}))
+	t.Cleanup(srv.Close)
+
+	src := New(Config{
+		Queries:      []Query{{Query: "kubernetes"}},
+		BaseURL:      srv.URL,
+		QueryTimeout: time.Minute,
+		RetryDelay:   time.Millisecond,
+	}, srv.Client())
+
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+
+	if _, _, err := src.Fetch(ctx); err == nil {
+		t.Fatal("Fetch succeeded against a server that never answers")
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if calls != 1 {
+		t.Errorf("server got %d calls, want 1 (no retry once the source's deadline passed)", calls)
 	}
 }
 
@@ -183,8 +283,46 @@ func TestFetchRejectsInvalidJSON(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	src := New(Config{Queries: []Query{{Query: "x"}}, BaseURL: srv.URL}, srv.Client())
+	src := New(Config{Queries: []Query{{Query: "x"}}, BaseURL: srv.URL, RetryDelay: time.Millisecond}, srv.Client())
 	if _, _, err := src.Fetch(context.Background()); err == nil {
 		t.Error("Fetch succeeded on a non-JSON body")
+	}
+}
+
+func TestFetchRunsQueriesConcurrently(t *testing.T) {
+	var mu sync.Mutex
+	inFlight, peak := 0, 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		inFlight++
+		peak = max(peak, inFlight)
+		mu.Unlock()
+
+		time.Sleep(50 * time.Millisecond)
+
+		mu.Lock()
+		inFlight--
+		mu.Unlock()
+		_, _ = w.Write([]byte(`{"hits":[]}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	var queries []Query
+	for _, q := range []string{"a", "b", "c", "d", "e", "f", "g", "h", "i", "j"} {
+		queries = append(queries, Query{Query: q})
+	}
+	src := New(Config{Queries: queries, BaseURL: srv.URL}, srv.Client())
+
+	raw, _, err := src.Fetch(context.Background())
+	if err != nil {
+		t.Fatalf("Fetch: %v", err)
+	}
+
+	var responses map[string]json.RawMessage
+	if err := json.Unmarshal(raw.Data, &responses); err != nil || len(responses) != len(queries) {
+		t.Errorf("raw payload has %d responses (err %v), want %d", len(responses), err, len(queries))
+	}
+	if peak < 2 || peak > maxConcurrent {
+		t.Errorf("peak concurrent queries = %d, want 2..%d", peak, maxConcurrent)
 	}
 }

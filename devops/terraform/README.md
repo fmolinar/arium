@@ -39,11 +39,12 @@ Same binary, same sources and normalization. It switches to Lambda mode when `AW
 
 ## Cost
 
-At three runs a day, about 5 s each, the function, scheduler and logs stay within the AWS free tier. The SSM
-standard parameter is free. The archive is a few MB and about 1,000 writes a month, which costs cents; it expires
-objects after 30 days. The function runs outside a VPC (S3 is reached over its public endpoint), so there's no
-NAT gateway, which would be the expensive part (about $32 a month). `terraform destroy` removes everything the
-collector stack creates; the bootstrap's buckets stay.
+At three runs a day, about 5 s each, the function, scheduler and logs stay within the AWS free tier, as do the two
+alarms, the one custom metric behind them and the SNS email topic. The SSM standard parameter is free. The archive
+is a few MB and about 1,000 writes a month, which costs cents; it expires objects after 30 days. The function runs
+outside a VPC (S3 is reached over its public endpoint), so there's no NAT gateway, which would be the expensive
+part (about $32 a month). `terraform destroy` removes everything the collector stack creates; the bootstrap's
+buckets stay.
 
 ## Prerequisites
 
@@ -123,6 +124,27 @@ A successful run logs a line like:
 `aws lambda invoke` prints `null` on success. Runs that fail (every source failed, or MongoDB unreachable)
 return an error, which shows up in the function's `Errors` metric. Failed scheduled runs aren't retried. Runs
 are idempotent, so the next one catches up.
+
+## Alerting
+
+Two CloudWatch alarms publish to the SNS topic in `terraform output alerts_topic_arn`. Set `alarm_email` to
+subscribe an address; AWS sends a confirmation link that must be clicked before alerts arrive.
+
+For Slack, authorize the workspace once in the console (Amazon Q Developer in chat applications → Configure new
+client → Slack; use us-west-2 or us-east-2, since us-east-1 has no endpoint), run `/invite @Amazon Q` in the channel,
+then set `slack_team_id` (shown in the console after authorizing). `slack_channel_id` defaults to the alerts
+channel. The channel can only receive notifications (`ReadOnlyAccess` guardrail).
+
+- `arium-collector-errors`: a run failed (the `Errors` metric).
+- `arium-collector-source-failing`: some source failed in each of the last `source_failure_runs` (default 3) runs.
+  A single failed source doesn't fail the run, so `Errors` never shows it. A metric filter counts the
+  `"msg":"source failed"` log lines instead. The alarm period is `run_interval_seconds` (8 h, one run per
+  period), so change it along with `schedule_expression`. To see which source is failing:
+
+```sh
+aws logs filter-log-events --region us-west-2 --log-group-name /aws/lambda/arium-collector \
+  --filter-pattern '{ $.msg = "source failed" }' --query 'events[].message' --output text
+```
 
 ## Showing the Atlas data in the frontend
 

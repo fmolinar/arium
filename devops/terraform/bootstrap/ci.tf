@@ -9,14 +9,15 @@
 # remove it afterwards.
 
 locals {
-  region_account = "${var.aws_region}:${local.account_id}"
-  role_arns      = "arn:aws:iam::${local.account_id}:role/${local.collector}-*"
-  function_arn   = "arn:aws:lambda:${local.region_account}:function:${local.collector}"
-  log_group_arn  = "arn:aws:logs:${local.region_account}:log-group:/aws/lambda/${local.collector}"
-  parameter_arns = "arn:aws:ssm:${local.region_account}:parameter/${var.project}/collector/*"
+  region_account   = "${var.aws_region}:${local.account_id}"
+  role_arns        = "arn:aws:iam::${local.account_id}:role/${local.collector}-*"
+  function_arn     = "arn:aws:lambda:${local.region_account}:function:${local.collector}"
+  log_group_arn    = "arn:aws:logs:${local.region_account}:log-group:/aws/lambda/${local.collector}"
+  parameter_arns   = "arn:aws:ssm:${local.region_account}:parameter/${var.project}/collector/*"
+  alerts_topic_arn = "arn:aws:sns:${local.region_account}:${local.collector}-alerts"
 }
 
-# Boundary for the collector's own roles (Lambda execution, scheduler).
+# Boundary for the collector's own roles (Lambda execution, scheduler, Chatbot).
 
 data "aws_iam_policy_document" "boundary" {
   statement {
@@ -166,10 +167,78 @@ data "aws_iam_policy_document" "ci" {
     resources = [local.log_group_arn, "${local.log_group_arn}:*"]
   }
 
+  statement {
+    sid       = "SourceFailureMetricFilter"
+    actions   = ["logs:PutMetricFilter", "logs:DeleteMetricFilter"]
+    resources = [local.log_group_arn, "${local.log_group_arn}:*"]
+  }
+
+  statement {
+    sid = "Alarms"
+    actions = [
+      "cloudwatch:PutMetricAlarm",
+      "cloudwatch:DeleteAlarms",
+      "cloudwatch:TagResource",
+      "cloudwatch:UntagResource",
+      "cloudwatch:ListTagsForResource",
+    ]
+    resources = ["arn:aws:cloudwatch:${local.region_account}:alarm:${local.collector}-*"]
+  }
+
+  statement {
+    sid = "AlertsTopic"
+    actions = [
+      "sns:CreateTopic",
+      "sns:DeleteTopic",
+      "sns:GetTopicAttributes",
+      "sns:SetTopicAttributes",
+      "sns:TagResource",
+      "sns:UntagResource",
+      "sns:ListTagsForResource",
+      "sns:Subscribe",
+      "sns:Unsubscribe",
+      "sns:GetSubscriptionAttributes",
+      "sns:SetSubscriptionAttributes",
+      "sns:ListSubscriptionsByTopic",
+    ]
+    resources = [local.alerts_topic_arn, "${local.alerts_topic_arn}:*"]
+  }
+
+  statement {
+    sid       = "PassRoleToChatbot"
+    actions   = ["iam:PassRole"]
+    resources = ["arn:aws:iam::${local.account_id}:role/${local.collector}-chatbot"]
+    condition {
+      test     = "StringEquals"
+      variable = "iam:PassedToService"
+      values   = ["chatbot.amazonaws.com"]
+    }
+  }
+
+  # Chatbot has no resource-level permissions for most actions.
+  statement {
+    sid = "SlackChannel"
+    actions = [
+      "chatbot:CreateSlackChannelConfiguration",
+      "chatbot:UpdateSlackChannelConfiguration",
+      "chatbot:DeleteSlackChannelConfiguration",
+      "chatbot:DescribeSlackChannelConfigurations",
+      "chatbot:TagResource",
+      "chatbot:UntagResource",
+      "chatbot:ListTagsForResource",
+    ]
+    resources = ["*"]
+  }
+
   # These list actions don't support resource-level permissions.
   statement {
-    sid       = "Describe"
-    actions   = ["logs:DescribeLogGroups", "ssm:DescribeParameters"]
+    sid = "Describe"
+    actions = [
+      "logs:DescribeLogGroups",
+      "logs:DescribeMetricFilters",
+      "ssm:DescribeParameters",
+      "cloudwatch:DescribeAlarms",
+    ]
     resources = ["*"]
   }
 }

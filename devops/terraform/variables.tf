@@ -53,9 +53,9 @@ variable "collector_retention" {
 }
 
 variable "collector_source_timeout" {
-  description = "Per-source fetch timeout (COLLECTOR_SOURCE_TIMEOUT)."
+  description = "Per-source fetch timeout (COLLECTOR_SOURCE_TIMEOUT). Longer than Compose's 15s because Algolia (Hacker News) sometimes takes over 10s to answer from AWS."
   type        = string
-  default     = "15s"
+  default     = "90s"
 }
 
 variable "lambda_memory_mb" {
@@ -67,7 +67,7 @@ variable "lambda_memory_mb" {
 variable "lambda_timeout_seconds" {
   description = "Function timeout. A run fetches every source concurrently (collector_source_timeout each) and then writes to MongoDB (up to 1 minute)."
   type        = number
-  default     = 120
+  default     = 180
 }
 
 variable "log_retention_days" {
@@ -86,4 +86,34 @@ variable "lambda_binary" {
   description = "Path to the linux/arm64 collector binary built by build.sh."
   type        = string
   default     = "build/bootstrap"
+}
+
+variable "alarm_email" {
+  description = "Email address for collector alarms. Empty creates the SNS topic without a subscription. AWS emails a confirmation link that must be clicked before alerts arrive."
+  type        = string
+  default     = ""
+}
+
+variable "run_interval_seconds" {
+  description = "Time between scheduled runs; the alarm period, so each period holds one run. Keep in step with schedule_expression."
+  type        = number
+  default     = 28800
+}
+
+variable "source_failure_runs" {
+  description = "Consecutive runs in which some source must fail before the source alarm fires."
+  type        = number
+  default     = 3
+}
+
+variable "slack_team_id" {
+  description = "Slack workspace ID (T...) authorized in the AWS Chatbot console. Empty skips Slack notifications."
+  type        = string
+  default     = ""
+}
+
+variable "slack_channel_id" {
+  description = "Slack channel ID (C...) that receives collector alarms. Invite the AWS app to it first (/invite @Amazon Q)."
+  type        = string
+  default     = "C0CC325HB5G"
 }
